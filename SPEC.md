@@ -22,8 +22,13 @@ describing an alleged crime) using LLM personas:
   and produces a **verdict** (justified / not_justified + confidence + written reasoning = the
   "protocol"). "Justified" favors the accused (the act was lawful/necessary); "not_justified" is
   against the accused.
-- The system's **final result** is the majority of the three judges' binary decisions, presented
-  with each judge's full reasoning and a **token/cost economy** report for the run.
+- The system's **output** is exactly what `INTENT.txt` specifies (lines 14–15): the **three
+  independent verdicts** (`verd1`, `verd2`, `verd3`), each with its **protocol** (how that judge
+  decided), plus the **code budget** (token/cost economy for the run). The tribunal does **not**
+  combine the three opinions into a single verdict and does not impose a sentence — this is required
+  by INTENT's output clause and stated explicitly in the source dossier's scope note. A non-binding
+  vote *tally* may be shown for convenience (see D5/§4.3), but it is a display of the three verdicts,
+  not a ruling.
 
 One full run = **7 LLM calls** (4 advocates, then 3 judges).
 
@@ -54,7 +59,7 @@ Selected per-run via a toggle. Exactly one mode runs per run.
 | D2 | Auth / user model | **Single seeded user + JWT.** One username/password seeded at setup; JWT gates the API. No public registration. |
 | D3 | Personalities configurable? | **Fully baked-in, loaded from an owner-provided file.** Not editable in the UI. See §8 for the required file contract. |
 | D4 | Debate depth | **Single blind round.** Advocates get only their persona + charge. Judges get persona + charge + all 4 speeches. No rebuttals. |
-| D5 | Verdict format | **Justified / Not_justified + confidence (0–100) + reasoning.** Final result = **majority** of the 3 binary decisions (odd count ⇒ never a tie). Confidence is displayed but does **not** weight the tally. Labels are `justified` / `not_justified` (not guilty/not-guilty) because a tribunal decides whether the alleged act was *justified* — matching the source dossier's scope note ("The Tribunal decides justified / not justified and gives reasons"). `justified` = for the accused; `not_justified` = against. |
+| D5 | Verdict format | **Justified / Not_justified + confidence (0–100) + reasoning (= the protocol).** Labels are `justified` / `not_justified` (not guilty/not-guilty) because a tribunal decides whether the alleged act was *justified* — matching the source dossier's scope note ("The Tribunal decides justified / not justified and gives reasons"). `justified` = for the accused; `not_justified` = against. **Revised (INTENT re-check):** the system does **not** produce an authoritative combined/majority verdict — INTENT's output clause lists only the 3 verdicts + protocols + code budget, and the dossier scope note says it "does not… combine the three opinions into one verdict." An optional, clearly-labeled **non-binding vote tally** (counts of the 3) may be shown for convenience only. |
 | D6 | Mode B meaning | **Different model per persona** (from the live free list). Mode A = one model for all. |
 | D7 | Mode selection | **Per-run toggle.** One mode per run. |
 | D8 | Cost/economy output | **Per-run JSON file + cumulative ledger file**, both persisted and downloadable; the run's economy is **also shown in the UI** alongside the final output. |
@@ -181,8 +186,7 @@ This is the canonical case extracted from the owner's dossier.
 | status | enum(`pending`,`running`,`completed`,`failed`,`aborted_over_budget`) | |
 | modelSingle | varchar null | Mode A: the one model id used |
 | costCeilingUsd | numeric(12,6) | copied from config at run start (default 5.000000) |
-| finalDecision | enum(`justified`,`not_justified`) null | majority result; null until completed |
-| finalVoteBreakdown | jsonb null | e.g. `{ "justified": 2, "not_justified": 1 }` |
+| verdictTally | jsonb null | **non-binding** count of the 3 verdicts for display only, e.g. `{ "justified": 2, "not_justified": 1 }`. NOT a combined verdict — the system issues none (INTENT §14–15 + dossier scope note). Null until completed. |
 | totalPromptTokens | integer | |
 | totalCompletionTokens | integer | |
 | totalTokens | integer | |
@@ -299,8 +303,9 @@ callModel({ model, systemPrompt, userPrompt, temperature, maxTokens }) → {
    chargeSheetSnapshot + rendered speeches in that order + a strict output-format instruction }`. Run the 3
    calls in parallel. Parse each into `{ decision, confidence, reasoning }` (§5.6). Persist a
    `Verdict` per judge. Apply the budget guard as in step 3.
-5. **Aggregate** — `finalDecision` = majority of the 3 `decision` values; store
-   `finalVoteBreakdown`. Sum tokens and cost across all 7 calls into the `Run`.
+5. **Finalize** — do **not** compute an authoritative combined verdict (INTENT outputs the 3
+   verdicts as-is). Optionally compute `verdictTally` = counts of the 3 `decision` values for
+   non-binding display. Sum tokens and cost across all 7 calls into the `Run`.
 6. Write the economy JSON file + append to the ledger (§6). Set status `completed`, `completedAt`.
 
 ### 5.6 Verdict output parsing (robust)
@@ -327,8 +332,7 @@ Per `INTENT.txt` and D8, every completed (or aborted) run produces:
 {
   "runId": "…", "createdAt": "…", "mode": "A_single | B_per_persona",
   "chargeSheetChars": 1234,
-  "finalDecision": "justified | not_justified",
-  "finalVoteBreakdown": { "justified": 2, "not_justified": 1 },
+  "verdictTally": { "justified": 2, "not_justified": 1 },
   "perPersona": [
     { "personaKey": "support_1", "role": "advocate", "side": "support",
       "model": "…", "promptTokens": 0, "completionTokens": 0, "totalTokens": 0,
@@ -342,7 +346,7 @@ Per `INTENT.txt` and D8, every completed (or aborted) run produces:
 ```
 
 **(b) Cumulative ledger** — `backend/data/ledger.jsonl`: one compact JSON line appended per run
-`{ runId, createdAt, mode, totalTokens, costUsd, finalDecision }`. Append-only; also reconstructable
+`{ runId, createdAt, mode, totalTokens, costUsd, verdictTally }`. Append-only; also reconstructable
 from the DB if the file is lost.
 
 **(c) UI display** — the RunResult page shows an **Economy panel** for that run (per-persona table,
@@ -467,8 +471,8 @@ All JSON. All except `/auth/login` require `Authorization: Bearer <jwt>`.
 | GET | `/charge-sheets` | — | list of all charge sheets (id, title, isActive, updatedAt) |
 | PATCH | `/charge-sheet/:id` | `{ title?, content?, isActive? }` | updates a charge sheet (editable per D9); setting `isActive:true` deactivates the others. **Built and protected, but not surfaced in the v1 UI.** |
 | POST | `/runs` | `{ mode, modelSingle?, chargeSheetId? }` | `{ runId }` — starts a run using `chargeSheetId` or the active charge sheet (see §10.1). No charge-sheet text in the body. |
-| GET | `/runs` | `?limit&offset` | list of run summaries (id, createdAt, mode, finalDecision, totalCostUsd, status) |
-| GET | `/runs/:id` | — | full run: charge, 4 speeches, 3 verdicts, final decision, economy |
+| GET | `/runs` | `?limit&offset` | list of run summaries (id, createdAt, mode, verdictTally, totalCostUsd, status) |
+| GET | `/runs/:id` | — | full run: charge, 4 speeches, 3 verdicts (each with protocol), economy, optional non-binding `verdictTally` |
 | GET | `/runs/:id/economy` | — | the per-run economy JSON (file (a)); `Content-Disposition: attachment` |
 | GET | `/economy/ledger` | — | the cumulative ledger (from DB and/or `ledger.jsonl`) |
 
@@ -491,8 +495,11 @@ Pages:
   (body carries only `mode` and optional `modelSingle`) → navigates to result on completion.
 - **Run Result** — three regions:
   1. **Advocates** — 4 SpeechCards grouped Support (defense) vs Against (prosecution).
-  2. **Judges** — 3 VerdictCards, each showing decision badge (justified/not_justified), confidence,
-     and the reasoning/protocol; plus a prominent **Final Verdict** banner (majority + vote breakdown).
+  2. **Judges** — 3 VerdictCards side by side, each showing its decision badge
+     (justified/not_justified), confidence, and the full reasoning/protocol. The three verdicts are
+     the output — there is **no combined "final verdict"**. A small, explicitly **non-binding vote
+     tally** ("2 of 3 judges: justified — the tribunal issues no combined verdict") may be shown for
+     convenience only.
   3. **Economy panel** — per-persona + per-model + totals table (tokens & USD), "$0.00 (free)" shown
      honestly, and **Download JSON** / view-ledger actions.
 - **History** — table of past runs (from `GET /runs`); row click → Run Result.
@@ -524,7 +531,108 @@ verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
 
 ---
 
-## 14. Build order (phased, each phase independently runnable)
+## 14. Testing
+
+### 14.1 Tooling & conventions
+- **Backend:** Jest (NestJS default) for unit + integration; **Supertest** for HTTP e2e; **nock**
+  (or `msw/node`) to stub every OpenRouter HTTP call; **Testcontainers-postgres** (ephemeral real
+  Postgres) for repository/e2e tests. Pure-logic units use no DB. Fixtures for `/models` and chat
+  responses live in `backend/test/fixtures/`.
+- **Frontend:** **Vitest** + **React Testing Library** (jsdom); **MSW** to mock the backend;
+  **Playwright** (optional) for one happy-path browser e2e.
+- **Hard rule — determinism:** tests NEVER call the real OpenRouter or any network. Everything is
+  stubbed. Never assert on model *prose/quality* (non-deterministic) — assert on parsing, routing,
+  aggregation, persistence, and structure.
+- **Coverage gate:** ≥ 80% lines/branches on the core logic modules (`tribunal/`, `openrouter/`,
+  `economy/`, `chargesheets/`, `personas/`, `auth/`). Config as a build decision, adjustable.
+
+### 14.2 Backend unit tests (pure logic — highest value, DB-free)
+
+| Component | Cases to cover |
+|-----------|----------------|
+| **Verdict parser** (§5.6) | parses `justified`/`not_justified` + confidence from multiline text with reasoning above; case-insensitive; trailing punctuation/whitespace tolerated; confidence clamped to 0–100; missing `DECISION:` or `CONFIDENCE:` → `needsReask`; conflicting duplicate `DECISION:` lines → documented rule (take last); total failure after re-ask → fallback `{justified, 0}` + flag |
+| **Verdict tally** (§5.5, non-binding) | counts the 3 `decision` values correctly (3–0, 2–1, 0–3); confidence never changes the counts; guard requires exactly 3 verdicts; asserts **no** authoritative combined `finalDecision` field is produced (INTENT conformance) |
+| **Free-model filter & assignment** (§5.2) | keeps only `prompt=="0" && completion=="0"`; excludes free-prompt/paid-completion; sorts by `context_length` desc; Mode A picks #1, honors `MODE_A_MODEL` only when still free; Mode B assigns 7 distinct, round-robins deterministically when < 7 exist, records assignment; empty free list → throws the actionable no-free-models error |
+| **Counterbalanced speech order** (§5.5) | judge *i* gets rotation *i*; the 3 judges get 3 distinct orders; recorded order == rendered order; deterministic (no RNG) |
+| **Economy builder** (§6) | sums `usage.cost` (free → `0.00`); per-persona rows for all 7; per-model rollup groups by model id with call counts; token totals correct; JSON shape matches §6 (snapshot test); ledger line shape `{runId,createdAt,mode,totalTokens,costUsd,verdictTally}` |
+| **Budget guard** (§5.5) | cumulative cost > ceiling → status `aborted_over_budget`, remaining calls skipped; ceiling read from the run *snapshot* not live config; partial rows + economy still persisted |
+| **Personas loader** (§8) | valid file loads 4+3; rejects ≠4 advocates / ≠3 judges; rejects side counts ≠ (2 support, 2 against); rejects duplicate keys; rejects empty `systemPrompt`; fail-fast with a clear message |
+| **Prompt builders** (§5.5, §13) | advocate prompt = `{system: persona, user: chargeSheetSnapshot}` with NO other speeches leaked; judge prompt includes snapshot + all 4 speeches + the `DECISION`/`CONFIDENCE` block; charge sheet embedded as clearly-delimited "case text" (framing string present — prompt-injection surface) |
+| **Charge sheet invariant** (§4.2) | setting `isActive` on one deactivates all others (exactly one active); run snapshots active content at creation; editing the sheet afterward leaves that run's snapshot unchanged |
+| **OpenRouter client** (§5.4, nock) | captures `usage.cost`, prompt/completion tokens, `reasoning_tokens` when present; 429 → backoff-retries then succeeds; exceeds max tries → throws; 402 → no retry, credits error; 404 data-policy body → typed `DataPolicyError` with actionable message; per-call timeout aborts |
+| **Auth** | argon2id hash/verify round-trip; JWT sign/verify; expired token rejected; seed is idempotent (no duplicate user on second boot) |
+
+### 14.3 Backend integration / e2e (Supertest + Testcontainers-postgres + nock)
+- `POST /auth/login`: valid → token; invalid → 401. Guard: `/runs` without token → 401, with token → 200.
+- **Full run happy path** (OpenRouter stubbed): `POST /runs {mode:A_single}` → `GET /runs/:id`
+  returns 4 speeches + 3 verdicts (each with its protocol) + economy (+ optional `verdictTally`); the
+  per-run JSON file exists on disk;
+  the ledger has a new line.
+- **Mode B:** the 7 persisted rows record distinct model ids.
+- **Charge sheet:** `GET /charge-sheet` returns the active one; `PATCH /charge-sheet/:id` content is
+  reflected in the *next* run's snapshot; `PATCH … {isActive:true}` flips the active flag and clears
+  the previous active.
+- **Failure surfaces:** OpenRouter 404 data-policy → API returns the actionable message (not 500);
+  OpenRouter 402 → run `failed` with credits message; ceiling `0.0001` → run `aborted_over_budget`
+  with partial rows persisted.
+
+### 14.4 Frontend component tests (Vitest + RTL + MSW)
+
+| Component | Cases |
+|-----------|-------|
+| **VerdictCard** | correct badge label/color for `justified` vs `not_justified`; confidence shown; reasoning rendered |
+| **Verdict list + tally** | the 3 VerdictCards all render; the non-binding tally shows correct counts and its "no combined verdict" label; assert there is no single "final verdict" element |
+| **EconomyPanel** | per-persona table + per-model rollup + totals render; `$0.00 (free)` shown when cost is 0; Download JSON triggers the correct request/blob |
+| **ModeToggle** | Mode A shows the model picker, Mode B hides it; submit payload carries the chosen mode (+ `modelSingle` only in A) |
+| **NewRun page** | charge sheet shown **read-only**; assert NO textarea/upload/edit control exists (guards D9); Run button disabled while the request is in flight |
+| **SpeechCard grouping** | support vs against grouped into the right columns |
+| **Login flow** | success stores token; a protected route with no token redirects to Login |
+| **API client** | attaches `Bearer` token; on 401 clears token + redirects; surfaces the data-policy error into a visible banner |
+| **History** | renders rows from `GET /runs`; row click navigates to the result |
+
+### 14.5 Frontend e2e (optional, Playwright, backend mocked/seeded)
+- login → run (Mode A) → see 4 speeches, 3 verdicts, the final banner, the economy panel, and a
+  working Download JSON.
+
+---
+
+## 15. Documentation
+
+### 15.1 API docs — Swagger / OpenAPI (`@nestjs/swagger`)
+- Add `@nestjs/swagger`. In `main.ts`, build a `DocumentBuilder` (title "Tribunal API", version,
+  description), call `.addBearerAuth()`, and mount `SwaggerModule.setup('api/docs', …)`. Served in
+  dev always; in prod gate behind an env flag (or the JWT).
+- Decorate **every DTO** with `@ApiProperty` (types, examples, and the enums: run `mode` =
+  `A_single|B_per_persona`, `decision` = `justified|not_justified`, run `status`). Decorate
+  controllers with `@ApiTags`, endpoints with `@ApiOperation` + `@ApiResponse` for
+  200/201/400/401/402/404, and `@ApiBearerAuth()` on protected routes.
+- **Document the special errors** so they show in the schema: 401 (auth), 402 (out of credits), and
+  the 404 free-model **data-policy** error — include its actionable "enable the privacy toggles"
+  message as the example body.
+- Emit `openapi.json` as a build artifact (from the generated `document`); optionally generate the
+  typed frontend API client from it (keeps the front/back contract in sync).
+- **Acceptance:** `/api/docs` renders and every endpoint in §10 appears with request/response schemas
+  and the bearer scheme; `openapi.json` is emitted.
+
+### 15.2 READMEs & operational docs
+- **Root README:** what Tribunal is, the architecture diagram (§3), run-with-docker-compose, the two
+  modes, and the token-economy output.
+- **Backend README:** the env table (§9), DB + migrations, seeding (user **and** charge sheet), the
+  **OpenRouter privacy-toggle requirement (§5.3) called out prominently**, how to run tests +
+  coverage, and where run JSON files / the ledger land.
+- **Frontend README:** env (API base URL), dev server, build, test.
+- `.env.example` documents every var in §9.
+- Top-of-module docblocks for `tribunal/`, `openrouter/`, `economy/` explaining the pipeline and the
+  "protocol" concept (each judge's reasoning).
+
+### 15.3 Code documentation
+- TSDoc on the public service methods (`runTribunal`, `resolveModels`, `parseVerdict`,
+  `buildEconomy`, charge-sheet activation). DTOs are the single source of API truth — Swagger derives
+  from them, so keep them accurate rather than hand-writing schemas.
+
+---
+
+## 16. Build order (phased, each phase independently runnable)
 
 1. **Scaffold** — repo layout, `docker-compose` Postgres, NestJS app, Vite React app, Tailwind,
    `.env.example`, config validation.
@@ -540,20 +648,24 @@ verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
 7. **Economy** — per-run JSON writer, ledger append, `/runs/:id/economy`, `/economy/ledger`.
 8. **Runs API** — `POST /runs`, `GET /runs`, `GET /runs/:id`.
 9. **Frontend** — New Run, Run Result (speeches + verdicts + final banner + economy panel), History.
-10. **Hardening** — error surfaces (§12), input caps, tests (unit: verdict parser, majority vote,
-   free-model filter, cost aggregation; e2e: login → run → result with OpenRouter mocked).
-11. **Docs** — README with setup, env, "enable OpenRouter free-endpoint privacy toggles" note, and
-    a reminder to drop in the real `personalities.json`.
+10. **Hardening + tests** — error surfaces (§12), input caps, and the full test suite per **§14**
+    (backend unit + integration/e2e, frontend component tests, coverage gate). OpenRouter is always
+    mocked. Swagger decorators (`@ApiProperty`/`@ApiOperation`/…) are added *alongside* each endpoint
+    in earlier phases, not deferred — this phase just verifies completeness.
+11. **Docs** — finalize **§15**: mount Swagger at `/api/docs` + emit `openapi.json`; write the root /
+    backend / frontend READMEs (incl. the "enable OpenRouter free-endpoint privacy toggles" note and
+    the reminder to drop in the real `personalities.json`).
 
-## 15. Acceptance criteria (definition of done for v1)
+## 17. Acceptance criteria (definition of done for v1)
 
 - A seeded user can log in; unauthenticated API calls are rejected.
 - The canonical charge sheet (Case T-001) is seeded into the DB on first boot and loaded by the
   program; the New Run page shows it read-only (no upload/edit control in v1). Editing it via
   `PATCH /charge-sheet/:id` works and affects only future runs.
-- Given the stored charge sheet and a chosen mode, a run produces 4 speeches, 3 verdicts
-  (each with decision + confidence + reasoning), a correct majority final decision, and stores an
-  immutable `chargeSheetSnapshot` on the run.
+- Given the stored charge sheet and a chosen mode, a run produces 4 speeches and **3 independent
+  verdicts** (each with decision + confidence + reasoning/protocol) plus the code budget — matching
+  INTENT's output clause. The system produces **no** authoritative combined/majority verdict; any
+  vote tally shown is explicitly non-binding. Each run stores an immutable `chargeSheetSnapshot`.
 - Mode A uses one model; Mode B assigns distinct free models per persona (recorded per call).
 - Every call's real token usage and `usage.cost` are captured; a per-run JSON file and a ledger
   entry are written; the same economy is shown in the UI with a working JSON download.
@@ -561,10 +673,14 @@ verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
 - The $5 (configurable) ceiling is enforced (verifiable by setting it very low and confirming
   `aborted_over_budget`).
 - Personas load from `personalities.json` and the app refuses to start if it is missing/invalid.
+- **Swagger UI at `/api/docs`** documents every §10 endpoint (request/response schemas, enums, the
+  bearer scheme, and the 401/402/404 error bodies); `openapi.json` is emitted.
+- **Test suites pass** in CI with OpenRouter fully mocked: backend unit + integration/e2e (§14.2–3)
+  and frontend component tests (§14.4), meeting the coverage gate on core logic modules.
 
 ---
 
-## 16. Research basis (sources)
+## 18. Research basis (sources)
 
 Free-model rate limits (50/day no-credit, 1,000/day after $10 lifetime, 20/min):
 - https://openrouter.ai/docs/api_reference/limits

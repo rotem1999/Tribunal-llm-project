@@ -14,6 +14,8 @@ and then we have 3 judges (each gets the prompt of personality and all speeches 
 each produce verdict (verd1,verd2,verd3) and the output of the system is a protocol (how each judge decided what he said) and all 3 verdicts
 and then a code budget (how many tokens were spent and price per the same run)
 
+The final output will be shown as the 3 verdicts from the judges with guilty/innocent as the title (according to the judgement)
+
 once we will use 1 llm for all the people with different system prompts
 secondly we will have a separate llm for all people (again different system prompts).
 
