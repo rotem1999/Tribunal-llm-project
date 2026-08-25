@@ -1,0 +1,31 @@
+Project idea summary, a tribunal
+
+2 supports
+2 against
+
+each have a different personality (system prompt)
+there is a charge sheet, a text that explains the crime. a form of input (to the 4 people), 
+it will be inputted using a txt file inserted by the user, or pasted/written in a text field.
+
+each of the 4 people based on the personality will produce speech which will try to convince why they are pro or con the convicted.
+
+and then we have 3 judges (each gets the prompt of personality and all speeches and charges as well as prompt to give verdict)
+
+each produce verdict (verd1,verd2,verd3) and the output of the system is a protocol (how each judge decided what he said) and all 3 verdicts
+and then a code budget (how many tokens were spent and price per the same run)
+
+once we will use 1 llm for all the people with different system prompts
+secondly we will have a separate llm for all people (again different system prompts).
+
+we will use the service of openrouter. try to find the freest model (not looking for performance) and with a top budget of 5$ for the total of the entire run.
+(but try to make it as free as possible when possible).
+
+as part of the project we will save the token usage economy in the project as a way to track the performance (with each run, a file will be outputted saving 
+the token usage number as well as cost, same file will be displayed to the user after the run of the program in the program itself).
+
+it will be web based, seperated into backend and frontend.
+
+the backend will be written using Nestjs with type script with typeORM, the db will use postgres. 
+the frontend will be built using react with tailwind.
+
+for the authentication between back to front we will use JWT.
