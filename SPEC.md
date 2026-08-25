@@ -19,7 +19,9 @@ describing an alleged crime) using LLM personas:
 - **4 advocates** — 2 arguing *for* the accused (`support`), 2 arguing *against* (`against`). Each
   has a fixed personality (its own system prompt). Each produces one persuasive **speech**.
 - **3 judges** — each has a fixed personality. Each reads the charge sheet **and all four speeches**
-  and produces a **verdict** (guilty / not-guilty + confidence + written reasoning = the "protocol").
+  and produces a **verdict** (justified / not_justified + confidence + written reasoning = the
+  "protocol"). "Justified" favors the accused (the act was lawful/necessary); "not_justified" is
+  against the accused.
 - The system's **final result** is the majority of the three judges' binary decisions, presented
   with each judge's full reasoning and a **token/cost economy** report for the run.
 
@@ -52,15 +54,18 @@ Selected per-run via a toggle. Exactly one mode runs per run.
 | D2 | Auth / user model | **Single seeded user + JWT.** One username/password seeded at setup; JWT gates the API. No public registration. |
 | D3 | Personalities configurable? | **Fully baked-in, loaded from an owner-provided file.** Not editable in the UI. See §8 for the required file contract. |
 | D4 | Debate depth | **Single blind round.** Advocates get only their persona + charge. Judges get persona + charge + all 4 speeches. No rebuttals. |
-| D5 | Verdict format | **Guilty/Not-guilty + confidence (0–100) + reasoning.** Final result = **majority** of the 3 binary decisions (odd count ⇒ never a tie). Confidence is displayed but does **not** weight the tally. |
+| D5 | Verdict format | **Justified / Not_justified + confidence (0–100) + reasoning.** Final result = **majority** of the 3 binary decisions (odd count ⇒ never a tie). Confidence is displayed but does **not** weight the tally. Labels are `justified` / `not_justified` (not guilty/not-guilty) because a tribunal decides whether the alleged act was *justified* — matching the source dossier's scope note ("The Tribunal decides justified / not justified and gives reasons"). `justified` = for the accused; `not_justified` = against. |
 | D6 | Mode B meaning | **Different model per persona** (from the live free list). Mode A = one model for all. |
 | D7 | Mode selection | **Per-run toggle.** One mode per run. |
 | D8 | Cost/economy output | **Per-run JSON file + cumulative ledger file**, both persisted and downloadable; the run's economy is **also shown in the UI** alongside the final output. |
+| D9 | Charge sheet handling | **Stored in the DB and loaded by the program**, seeded from the canonical Case T-001 (from the dossier). For now the UI has **no upload/paste and no edit control** — a run uses the stored active charge sheet. But the charge sheet is a **first-class editable DB entity** (editable via API/DB, snapshotted per run), so exposing editing/upload later is a UI change only, not a data-model change. |
 
 ### 2.1 Decisions the implementer makes (low-stakes, stated so nothing is left open)
 
 - **UI language:** English. (Model output naturally follows the charge sheet's language.)
-- **Charge sheet input:** both a `.txt` upload and a paste/type textarea, per `INTENT.txt`.
+- **Charge sheet input:** the program loads the **stored active charge sheet** from the DB (seeded
+  from Case T-001). The `.txt` upload / paste textarea from `INTENT.txt` is **deferred** — the entity
+  and API are built editable now, but the New Run UI does not expose editing or upload yet (D9).
 - **Model selection:** resolved at runtime from OpenRouter `GET /models`, filtered to zero price
   (do **not** hardcode model names; the free roster changes monthly).
 - **Position-bias mitigation:** the order in which the 4 speeches are shown to each judge is
@@ -98,6 +103,7 @@ Tribunal/
 ├─ INTENT.txt                 # original brief (do not edit)
 ├─ SPEC.md                    # this file
 ├─ personalities.json         # owner-provided persona definitions (see §8) — REQUIRED to build/run
+├─ charge-sheet.seed.txt      # canonical Case T-001 text; seeded into the DB on first boot (§4.2b)
 ├─ docker-compose.yml         # postgres (+ optional adminer) for local dev
 ├─ .env.example               # documents every env var (see §9)
 ├─ backend/
@@ -108,6 +114,7 @@ Tribunal/
 │  │  ├─ auth/                       # login, JWT strategy, guard, seed user
 │  │  ├─ users/                      # User entity + seed
 │  │  ├─ personas/                   # loads & validates personalities.json at boot
+│  │  ├─ chargesheets/               # ChargeSheet entity, seed from charge-sheet.seed.txt, CRUD
 │  │  ├─ openrouter/                 # HTTP client, model list cache, chat wrapper, retry/backoff
 │  │  ├─ tribunal/                   # orchestration: run a tribunal (advocates → judges → verdict)
 │  │  ├─ runs/                       # Run/Speech/Verdict entities, run controller, economy export
@@ -144,19 +151,38 @@ Use UUID primary keys, `createdAt`/`updatedAt` timestamps on all tables. Money s
 | passwordHash | varchar | argon2id (preferred) or bcrypt |
 | createdAt | timestamptz | |
 
-### 4.2 `Run`
+### 4.2 `ChargeSheet`
+The case text fed to every persona. A first-class, **editable** entity (D9). One row is `isActive`.
+| column | type | notes |
+|--------|------|-------|
+| id | uuid PK | |
+| title | varchar | e.g. `T-001: The Realm v. Jon Snow` |
+| content | text | the full charge-sheet text sent to the models (premises + agreed facts + question + scope) |
+| isActive | boolean | exactly one active at a time; the run pipeline loads the active one by default |
+| createdAt / updatedAt | timestamptz | `updatedAt` changes when edited |
+
+> **Editable, but runs are immutable.** Editing a `ChargeSheet` (via API/DB) changes future runs
+> only. Each `Run` snapshots the exact text it used (`chargeSheetSnapshot` below), so past runs and
+> their protocols stay reproducible even after the charge sheet is edited.
+
+### 4.2b Seeding the charge sheet
+On backend boot, if no `ChargeSheet` exists, seed one from `charge-sheet.seed.txt` (path overridable
+via `CHARGE_SHEET_SEED_FILE`) with `title = "T-001: The Realm v. Jon Snow"` and `isActive = true`.
+This is the canonical case extracted from the owner's dossier.
+
+### 4.3 `Run`
 | column | type | notes |
 |--------|------|-------|
 | id | uuid PK | |
 | userId | uuid FK → User | owner of the run |
-| chargeSheet | text | the input crime description |
-| chargeSheetSource | enum(`paste`,`upload`) | provenance |
+| chargeSheetId | uuid FK → ChargeSheet | which stored charge sheet was used |
+| chargeSheetSnapshot | text | exact charge-sheet text at run time (audit/reproducibility) |
 | mode | enum(`A_single`,`B_per_persona`) | §1.1 |
 | status | enum(`pending`,`running`,`completed`,`failed`,`aborted_over_budget`) | |
 | modelSingle | varchar null | Mode A: the one model id used |
 | costCeilingUsd | numeric(12,6) | copied from config at run start (default 5.000000) |
-| finalDecision | enum(`guilty`,`not_guilty`) null | majority result; null until completed |
-| finalVoteBreakdown | jsonb null | e.g. `{ "guilty": 2, "not_guilty": 1 }` |
+| finalDecision | enum(`justified`,`not_justified`) null | majority result; null until completed |
+| finalVoteBreakdown | jsonb null | e.g. `{ "justified": 2, "not_justified": 1 }` |
 | totalPromptTokens | integer | |
 | totalCompletionTokens | integer | |
 | totalTokens | integer | |
@@ -165,7 +191,7 @@ Use UUID primary keys, `createdAt`/`updatedAt` timestamps on all tables. Money s
 | error | text null | populated on failure |
 | createdAt / completedAt | timestamptz | |
 
-### 4.3 `Speech` (one per advocate call)
+### 4.4 `Speech` (one per advocate call)
 | column | type | notes |
 |--------|------|-------|
 | id | uuid PK | |
@@ -181,7 +207,7 @@ Use UUID primary keys, `createdAt`/`updatedAt` timestamps on all tables. Money s
 | latencyMs | integer | |
 | createdAt | timestamptz | |
 
-### 4.4 `Verdict` (one per judge call)
+### 4.5 `Verdict` (one per judge call)
 | column | type | notes |
 |--------|------|-------|
 | id | uuid PK | |
@@ -189,7 +215,7 @@ Use UUID primary keys, `createdAt`/`updatedAt` timestamps on all tables. Money s
 | personaKey | varchar | e.g. `judge_1` |
 | model | varchar | model id used |
 | systemPrompt | text | exact prompt sent |
-| decision | enum(`guilty`,`not_guilty`) | parsed from model output |
+| decision | enum(`justified`,`not_justified`) | parsed from model output |
 | confidence | integer | 0–100, parsed |
 | reasoning | text | the "protocol" for this judge |
 | rawResponse | text | full model text (fallback if parsing partial) |
@@ -258,16 +284,19 @@ callModel({ model, systemPrompt, userPrompt, temperature, maxTokens }) → {
 - **Timeout:** per-call timeout (e.g. 90s), configurable.
 
 ### 5.5 Run pipeline (`tribunal` module)
-1. Create `Run` (status `running`), snapshot `costCeilingUsd` from config.
+1. Load the charge sheet: use the request's `chargeSheetId` if given, else the `isActive`
+   `ChargeSheet`. Create `Run` (status `running`), set `chargeSheetId`, copy its `content` into
+   `chargeSheetSnapshot`, and snapshot `costCeilingUsd` from config. All later steps use the
+   snapshot, never re-read the entity (so a mid-flight edit cannot change this run).
 2. Resolve models for the chosen mode (§5.2).
 3. **Advocate phase** — build each advocate's prompt = `{ system: persona.systemPrompt, user:
-   chargeSheet }`. Run the 4 calls in parallel. Persist a `Speech` per call. After each call, add
+   chargeSheetSnapshot }`. Run the 4 calls in parallel. Persist a `Speech` per call. After each call, add
    its `costUsd` to the running total; if total > `costCeilingUsd`, stop, set status
    `aborted_over_budget`, persist what exists, still write economy, and return. (With free models
    this never triggers; the guard exists for safety and future paid models.)
 4. **Judge phase** — for each judge, compute a **counterbalanced speech order** (rotate the 4
    speeches by judge index; record it). Build prompt = `{ system: judge.systemPrompt, user:
-   chargeSheet + rendered speeches in that order + a strict output-format instruction }`. Run the 3
+   chargeSheetSnapshot + rendered speeches in that order + a strict output-format instruction }`. Run the 3
    calls in parallel. Parse each into `{ decision, confidence, reasoning }` (§5.6). Persist a
    `Verdict` per judge. Apply the budget guard as in step 3.
 5. **Aggregate** — `finalDecision` = majority of the 3 `decision` values; store
@@ -279,12 +308,13 @@ Instruct each judge to end its answer with a strict machine-readable block, whil
 reasoning above it. Prompt suffix (exact intent, wording may be tuned):
 
 > "First give your reasoning as the trial protocol. Then, on the final lines, output EXACTLY:
-> `DECISION: guilty` or `DECISION: not_guilty`, then `CONFIDENCE: <integer 0-100>`."
+> `DECISION: justified` or `DECISION: not_justified`, then `CONFIDENCE: <integer 0-100>`."
 
 Parser: case-insensitive regex for `DECISION:` and `CONFIDENCE:`. If parsing fails, do a single
 one-shot re-ask ("Reply with only the two lines…") using the same model; if it still fails, store
-`rawResponse`, mark the verdict `decision` via a conservative fallback (e.g. `not_guilty` =
-benefit of the doubt) with `confidence: 0`, and flag the run in `error`. Always keep `rawResponse`.
+`rawResponse`, mark the verdict `decision` via a conservative fallback (`justified` =
+benefit of the doubt to the accused) with `confidence: 0`, and flag the run in `error`. Always keep
+`rawResponse`.
 
 ---
 
@@ -297,8 +327,8 @@ Per `INTENT.txt` and D8, every completed (or aborted) run produces:
 {
   "runId": "…", "createdAt": "…", "mode": "A_single | B_per_persona",
   "chargeSheetChars": 1234,
-  "finalDecision": "guilty | not_guilty",
-  "finalVoteBreakdown": { "guilty": 2, "not_guilty": 1 },
+  "finalDecision": "justified | not_justified",
+  "finalVoteBreakdown": { "justified": 2, "not_justified": 1 },
   "perPersona": [
     { "personaKey": "support_1", "role": "advocate", "side": "support",
       "model": "…", "promptTokens": 0, "completionTokens": 0, "totalTokens": 0,
@@ -369,9 +399,30 @@ prompt at render time or shown in the UI). If the owner's file only provides pro
 full system prompts, the persona loader composes a system prompt from a template + traits — but the
 exact text sent is always snapshotted onto each `Speech`/`Verdict` for audit.
 
-> **Build dependency:** this file does not yet exist in the repo. The owner will provide it. The app
-> cannot run without it. Until it arrives, use a clearly-labeled `personalities.example.json` for
-> development only.
+**Status: PROVIDED.** `personalities.json` now exists at repo root, derived from the owner's dossier
+("THE TRIBUNAL — Jon Snow and the untimely demise of Daenerys Targaryen"). The seven personas are:
+
+| key | side / role | persona | notes |
+|-----|-------------|---------|-------|
+| `support_1` | support (defense) | Jon Snow | fictional GoT character, first-person voice |
+| `support_2` | support (defense) | Tyrion Lannister | fictional GoT character |
+| `against_1` | against (prosecution) | Daenerys Targaryen | fictional GoT character (the deceased, arguing in character) |
+| `against_2` | against (prosecution) | Grey Worm | fictional GoT character |
+| `judge_1` | judge | Barak tradition | fictional judge reasoning in the *method* of Justice Aharon Barak |
+| `judge_2` | judge | Elon tradition | fictional judge reasoning in the *method* of Justice Menachem Elon |
+| `judge_3` | judge | Shamgar tradition | fictional judge reasoning in the *method* of Justice Meir Shamgar |
+
+**Judge personas are method-based, not impersonations.** Each judge `systemPrompt` opens with an
+explicit disclaimer: a fictional judge reasoning in the jurisprudential tradition associated with the
+named jurist, *not* the real person, *not* their views, on a fictional case. This matches the
+dossier's own framing ("adapts judicial methods; does not impersonate the judges or predict a real
+court") and must be preserved in any edit — do not rewrite these into first-person impersonations of
+the real justices.
+
+**Verdict-format text is intentionally NOT in the persona file.** The judge `systemPrompt`s
+establish character and instruct "reach your own reasoned verdict," but the strict machine-readable
+`DECISION:` / `CONFIDENCE:` block is appended by the orchestrator at call time (§5.6), not stored in
+`personalities.json`. Keep it that way (single source of truth for the output contract).
 
 ---
 
@@ -397,6 +448,7 @@ All via `@nestjs/config` with schema validation; document in `.env.example`.
 | `SEED_USERNAME` | yes | — | |
 | `SEED_PASSWORD` | yes | — | seeded once at boot |
 | `PERSONAS_FILE` | no | `../personalities.json` | persona source |
+| `CHARGE_SHEET_SEED_FILE` | no | `../charge-sheet.seed.txt` | seed text for Case T-001 (§4.2b) |
 | `CORS_ORIGINS` | yes | — | comma-separated frontend origins |
 | `PORT` | no | `3000` | backend port |
 
@@ -411,7 +463,10 @@ All JSON. All except `/auth/login` require `Authorization: Bearer <jwt>`.
 | POST | `/auth/login` | `{ username, password }` | `{ accessToken }` |
 | GET | `/auth/me` | — | `{ id, username }` |
 | GET | `/models/free` | — | `[{ id, contextLength }]` (cached live free list) |
-| POST | `/runs` | `{ chargeSheet, chargeSheetSource, mode, modelSingle? }` | `{ runId }` — starts a run (see §10.1) |
+| GET | `/charge-sheet` | — | the active charge sheet `{ id, title, content, updatedAt }` |
+| GET | `/charge-sheets` | — | list of all charge sheets (id, title, isActive, updatedAt) |
+| PATCH | `/charge-sheet/:id` | `{ title?, content?, isActive? }` | updates a charge sheet (editable per D9); setting `isActive:true` deactivates the others. **Built and protected, but not surfaced in the v1 UI.** |
+| POST | `/runs` | `{ mode, modelSingle?, chargeSheetId? }` | `{ runId }` — starts a run using `chargeSheetId` or the active charge sheet (see §10.1). No charge-sheet text in the body. |
 | GET | `/runs` | `?limit&offset` | list of run summaries (id, createdAt, mode, finalDecision, totalCostUsd, status) |
 | GET | `/runs/:id` | — | full run: charge, 4 speeches, 3 verdicts, final decision, economy |
 | GET | `/runs/:id/economy` | — | the per-run economy JSON (file (a)); `Content-Disposition: attachment` |
@@ -430,13 +485,14 @@ rewrite (i.e. orchestration is a service method, not inline in the controller).
 
 Pages:
 - **Login** — username/password → stores JWT.
-- **New Run** — charge sheet input (textarea **and** `.txt` upload that fills the textarea), a
-  **Mode A/B toggle** with a one-line explanation of each, and (Mode A) an optional model picker fed
-  by `GET /models/free`. "Run tribunal" button → `POST /runs` → navigates to result on completion.
+- **New Run** — displays the **stored active charge sheet read-only** (from `GET /charge-sheet`; no
+  edit/upload control in v1, per D9), a **Mode A/B toggle** with a one-line explanation of each, and
+  (Mode A) an optional model picker fed by `GET /models/free`. "Run tribunal" button → `POST /runs`
+  (body carries only `mode` and optional `modelSingle`) → navigates to result on completion.
 - **Run Result** — three regions:
-  1. **Advocates** — 4 SpeechCards grouped Support vs Against.
-  2. **Judges** — 3 VerdictCards, each showing decision badge (guilty/not-guilty), confidence, and
-     the reasoning/protocol; plus a prominent **Final Verdict** banner (majority + vote breakdown).
+  1. **Advocates** — 4 SpeechCards grouped Support (defense) vs Against (prosecution).
+  2. **Judges** — 3 VerdictCards, each showing decision badge (justified/not_justified), confidence,
+     and the reasoning/protocol; plus a prominent **Final Verdict** banner (majority + vote breakdown).
   3. **Economy panel** — per-persona + per-model + totals table (tokens & USD), "$0.00 (free)" shown
      honestly, and **Download JSON** / view-ledger actions.
 - **History** — table of past runs (from `GET /runs`); row click → Run Result.
@@ -476,21 +532,28 @@ verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
 3. **OpenRouter module** — chat wrapper (usage+cost capture, retry/backoff), `GET /models` free
    filter + cache, `/models/free` endpoint. Smoke-test one free call end to end.
 4. **Personas module** — load + validate `personalities.json` (example file for dev).
-5. **Tribunal orchestration** — advocate phase, judge phase (counterbalanced order), aggregation,
+5. **Charge sheet module** — `ChargeSheet` entity, seed from `charge-sheet.seed.txt` on boot,
+   `GET /charge-sheet`, `GET /charge-sheets`, `PATCH /charge-sheet/:id` (editable; not surfaced in
+   v1 UI).
+6. **Tribunal orchestration** — advocate phase, judge phase (counterbalanced order), aggregation,
    budget guard. Persist Run/Speech/Verdict.
-6. **Economy** — per-run JSON writer, ledger append, `/runs/:id/economy`, `/economy/ledger`.
-7. **Runs API** — `POST /runs`, `GET /runs`, `GET /runs/:id`.
-8. **Frontend** — New Run, Run Result (speeches + verdicts + final banner + economy panel), History.
-9. **Hardening** — error surfaces (§12), input caps, tests (unit: verdict parser, majority vote,
+7. **Economy** — per-run JSON writer, ledger append, `/runs/:id/economy`, `/economy/ledger`.
+8. **Runs API** — `POST /runs`, `GET /runs`, `GET /runs/:id`.
+9. **Frontend** — New Run, Run Result (speeches + verdicts + final banner + economy panel), History.
+10. **Hardening** — error surfaces (§12), input caps, tests (unit: verdict parser, majority vote,
    free-model filter, cost aggregation; e2e: login → run → result with OpenRouter mocked).
-10. **Docs** — README with setup, env, "enable OpenRouter free-endpoint privacy toggles" note, and
+11. **Docs** — README with setup, env, "enable OpenRouter free-endpoint privacy toggles" note, and
     a reminder to drop in the real `personalities.json`.
 
 ## 15. Acceptance criteria (definition of done for v1)
 
 - A seeded user can log in; unauthenticated API calls are rejected.
-- Given a pasted or uploaded charge sheet and a chosen mode, a run produces 4 speeches, 3 verdicts
-  (each with decision + confidence + reasoning), and a correct majority final decision.
+- The canonical charge sheet (Case T-001) is seeded into the DB on first boot and loaded by the
+  program; the New Run page shows it read-only (no upload/edit control in v1). Editing it via
+  `PATCH /charge-sheet/:id` works and affects only future runs.
+- Given the stored charge sheet and a chosen mode, a run produces 4 speeches, 3 verdicts
+  (each with decision + confidence + reasoning), a correct majority final decision, and stores an
+  immutable `chargeSheetSnapshot` on the run.
 - Mode A uses one model; Mode B assigns distinct free models per persona (recorded per call).
 - Every call's real token usage and `usage.cost` are captured; a per-run JSON file and a ledger
   entry are written; the same economy is shown in the UI with a working JSON download.
