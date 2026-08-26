@@ -1,0 +1,3 @@
+# test/
+
+Backend test support (§14). Jest via `@nx/jest`; unit specs colocate as `*.spec.ts` beside the code; `/models` + chat **fixtures** live in `fixtures/`. nock or `msw/node` stubs **every** OpenRouter call — tests never hit the real network, and never assert on model prose (assert parsing, routing, aggregation, persistence, structure). Coverage ≥80% on core modules + `shared-types`. High-value units: verdict parser, tally (no combined verdict), free-model filter/assignment, counterbalanced order, economy builder, budget guard, personas loader, prompt builders. (e2e lives in `apps/api-e2e`.)
