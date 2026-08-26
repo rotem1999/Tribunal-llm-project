@@ -85,61 +85,104 @@ Selected per-run via a toggle. Exactly one mode runs per run.
 ## 3. Architecture overview
 
 ```
-┌────────────────────┐        JWT (Bearer)        ┌─────────────────────────────┐
-│  Frontend (React)  │  ───────────────────────▶  │  Backend (NestJS + TS)      │
-│  Vite + Tailwind   │  ◀───────────────────────  │  TypeORM ▶ PostgreSQL       │
-└────────────────────┘        JSON over HTTP       │  OpenRouter client          │
-                                                    └──────────────┬──────────────┘
-                                                                   │ HTTPS
-                                                                   ▼
-                                                     OpenRouter API (chat + models)
+                         ┌──────────────────────── Nx monorepo ────────────────────────┐
+┌────────────────────┐   │  apps/web (React+Tailwind+Vite)     apps/api (NestJS+TS)     │
+│   Browser (SPA)    │◀──┼─▶  ── JWT (Bearer), JSON over HTTP ─▶  TypeORM ▶ PostgreSQL   │
+└────────────────────┘   │        ▲                                  │  OpenRouter client │
+                         │        └── imports types from ───┐        └────────┬──────────┘
+                         │        libs/shared-types  ◀──────┘                 │ HTTPS      │
+                         └──────────────────────────────────────────────────┼────────────┘
+                                                                             ▼
+                                                              OpenRouter API (chat + models)
 ```
 
-- **Backend:** NestJS (TypeScript), TypeORM, PostgreSQL. Owns all LLM orchestration, cost
-  accounting, persistence, auth. The frontend never talks to OpenRouter directly (the API key
+- **Monorepo:** a single **Nx** workspace holds both apps and the code they share (§3.2). Package
+  scope is `@nx/*` (current, not `@nrwl/*`).
+- **`apps/api` (Backend):** NestJS (TypeScript), TypeORM, PostgreSQL. Owns all LLM orchestration,
+  cost accounting, persistence, auth. The frontend never talks to OpenRouter directly (the API key
   stays server-side).
-- **Frontend:** React + Tailwind (build with Vite). Talks only to the backend.
+- **`apps/web` (Frontend):** React + Tailwind (Vite). Talks only to the backend.
+- **`libs/shared-types` (shared):** the request/response **interfaces** and **enums** (`mode`,
+  `decision`, run `status`) are defined **once** here and imported by both apps — the main reason to
+  use a monorepo; it removes front/back contract drift. **Framework-free TypeScript only** (no
+  NestJS, class-validator, or Swagger imports — those would bloat the browser bundle). Consequence:
+  the api's DTO *classes* (which carry `@ApiProperty` + class-validator decorators for Swagger and
+  validation, §15.1) live in `apps/api` and **`implements`** the shared interfaces; `apps/web`
+  imports only the plain interfaces/enums. One source of truth for the shape, decorators only where
+  they're needed.
 - **Auth:** JWT bearer tokens between front and back.
 
-### 3.1 Repository layout
+### 3.1 Repository layout (Nx workspace)
 
 ```
-Tribunal/
-├─ INTENT.txt                 # original brief (do not edit)
-├─ SPEC.md                    # this file
-├─ personalities.json         # owner-provided persona definitions (see §8) — REQUIRED to build/run
-├─ charge-sheet.seed.txt      # canonical Case T-001 text; seeded into the DB on first boot (§4.2b)
-├─ docker-compose.yml         # postgres (+ optional adminer) for local dev
-├─ .env.example               # documents every env var (see §9)
-├─ backend/
-│  ├─ src/
-│  │  ├─ main.ts
-│  │  ├─ app.module.ts
-│  │  ├─ config/                     # env loading + validation (@nestjs/config + zod/joi)
-│  │  ├─ auth/                       # login, JWT strategy, guard, seed user
-│  │  ├─ users/                      # User entity + seed
-│  │  ├─ personas/                   # loads & validates personalities.json at boot
-│  │  ├─ chargesheets/               # ChargeSheet entity, seed from charge-sheet.seed.txt, CRUD
-│  │  ├─ openrouter/                 # HTTP client, model list cache, chat wrapper, retry/backoff
-│  │  ├─ tribunal/                   # orchestration: run a tribunal (advocates → judges → verdict)
-│  │  ├─ runs/                       # Run/Speech/Verdict entities, run controller, economy export
-│  │  └─ economy/                    # cost aggregation, JSON file + ledger writer
-│  ├─ data/                          # written run JSON files + ledger.jsonl (gitignored)
-│  ├─ test/
-│  ├─ package.json
-│  └─ tsconfig.json
-└─ frontend/
-   ├─ src/
-   │  ├─ main.tsx, App.tsx
-   │  ├─ api/                        # typed fetch client, auth token handling
-   │  ├─ pages/  (Login, NewRun, RunResult, History)
-   │  ├─ components/                 # SpeechCard, VerdictCard, EconomyPanel, ModeToggle, ...
-   │  └─ styles/
-   ├─ index.html
-   ├─ tailwind.config.js
-   ├─ package.json
-   └─ vite.config.ts
+Tribunal/                        # Nx workspace root
+├─ INTENT.txt                    # original brief (do not edit)
+├─ SPEC.md                       # this file
+├─ personalities.json            # owner-provided persona definitions (§8) — REQUIRED to build/run
+├─ charge-sheet.seed.txt         # canonical Case T-001 text; seeded into the DB on first boot (§4.2b)
+├─ docker-compose.yml            # postgres (+ optional adminer) for local dev
+├─ .env.example                  # documents every env var (§9)
+├─ nx.json                       # Nx config: target defaults, caching, named inputs (§3.2)
+├─ package.json                  # ONE root package.json for the whole workspace
+├─ tsconfig.base.json            # path aliases, incl. @tribunal/shared-types → libs/shared-types
+├─ apps/
+│  ├─ api/                       # NestJS backend  (nx g @nx/nest:app apps/api)
+│  │  ├─ src/
+│  │  │  ├─ main.ts              # bootstraps Nest + Swagger (§15.1)
+│  │  │  ├─ app/app.module.ts
+│  │  │  ├─ config/              # env loading + validation (@nestjs/config + zod/joi)
+│  │  │  ├─ auth/                # login, JWT strategy, guard, seed user
+│  │  │  ├─ users/               # User entity + seed
+│  │  │  ├─ personas/            # loads & validates personalities.json at boot
+│  │  │  ├─ chargesheets/        # ChargeSheet entity, seed, CRUD
+│  │  │  ├─ openrouter/          # HTTP client, model list cache, chat wrapper, retry/backoff
+│  │  │  ├─ tribunal/            # orchestration: advocates → judges → verdicts (no combined verdict)
+│  │  │  ├─ runs/                # Run/Speech/Verdict entities, run controller
+│  │  │  └─ economy/             # cost aggregation, JSON file + ledger writer
+│  │  ├─ data/                   # written run JSON files + ledger.jsonl (gitignored)
+│  │  ├─ project.json            # Nx targets: build/serve/test/lint (Jest via @nx/jest)
+│  │  └─ tsconfig.*.json
+│  ├─ api-e2e/                   # backend e2e (Supertest) — nx g @nx/nest:app or jest e2e project
+│  └─ web/                       # React frontend  (nx g @nx/react:app apps/web --bundler=vite)
+│     ├─ src/
+│     │  ├─ main.tsx, app/App.tsx
+│     │  ├─ api/                 # typed fetch client (uses @tribunal/shared-types), auth token
+│     │  ├─ pages/               # Login, NewRun, RunResult, History
+│     │  ├─ components/          # SpeechCard, VerdictCard, EconomyPanel, ModeToggle, VerdictTally…
+│     │  └─ styles/
+│     ├─ index.html
+│     ├─ tailwind.config.js
+│     ├─ vite.config.ts          # Vitest configured here too
+│     └─ project.json            # Nx targets: build/serve/test (Vitest via @nx/vite)/lint
+├─ apps/web-e2e/                 # Playwright e2e (optional) — @nx/playwright
+└─ libs/
+   └─ shared-types/              # framework-free DTOs/enums shared by api + web
+      ├─ src/index.ts            # public barrel; import path @tribunal/shared-types
+      └─ project.json            # buildable lib (@nx/js)
 ```
+
+> Domain modules stay inside `apps/api/src` for a project this size. If they grow, extract them to
+> `libs/api/<domain>` later — an Nx move, not a redesign. Only truly shared, framework-free contract
+> types belong in `libs/shared-types`.
+
+### 3.2 Nx workspace conventions
+- **Create:** `npx create-nx-workspace@latest tribunal --preset=apps` (integrated monorepo), then
+  `nx add @nx/nest @nx/react @nx/js`. Generate: `nx g @nx/nest:app apps/api`,
+  `nx g @nx/react:app apps/web --bundler=vite`, `nx g @nx/js:lib libs/shared-types --bundler=tsc`.
+- **One root `package.json`** for the whole workspace (single dependency tree, single lockfile).
+- **Task running:** `nx serve api`, `nx serve web`, `nx build <app>`, `nx test <project>`,
+  `nx lint <project>`, `nx run-many -t test`, and **`nx affected -t build test lint`** in CI so only
+  projects touched by a change (and their dependents) run. Nx computes the project graph from imports.
+- **Caching:** `nx.json` sets `targetDefaults` with `cache: true` for build/test/lint and
+  `dependsOn: ["^build"]` so a project builds its lib deps first. Named `inputs` exclude test files
+  from build hashing. Local cache by default; remote cache (Nx Cloud) optional and out of v1 scope.
+- **Module boundaries:** tag each project in `project.json` (`scope:api` | `scope:web` |
+  `scope:shared`, and `type:app` | `type:lib`) and enable the `@nx/enforce-module-boundaries` lint
+  rule so, e.g., `web` cannot import server code and everything may import `scope:shared`. This is
+  what keeps the OpenRouter key and TypeORM entities from ever leaking into the browser bundle.
+- **Path alias:** `@tribunal/shared-types` (declared in `tsconfig.base.json`) is how both apps import
+  the shared contract. Optionally the `openapi.json` from Swagger (§15.1) generates these types into
+  the lib to guarantee they match the running API.
 
 ---
 
@@ -327,7 +370,7 @@ benefit of the doubt to the accused) with `confidence: 0`, and flag the run in `
 
 Per `INTENT.txt` and D8, every completed (or aborted) run produces:
 
-**(a) Per-run JSON file** — `backend/data/runs/<runId>.json`:
+**(a) Per-run JSON file** — `apps/api/data/runs/<runId>.json`:
 ```json
 {
   "runId": "…", "createdAt": "…", "mode": "A_single | B_per_persona",
@@ -345,7 +388,7 @@ Per `INTENT.txt` and D8, every completed (or aborted) run produces:
 }
 ```
 
-**(b) Cumulative ledger** — `backend/data/ledger.jsonl`: one compact JSON line appended per run
+**(b) Cumulative ledger** — `apps/api/data/ledger.jsonl`: one compact JSON line appended per run
 `{ runId, createdAt, mode, totalTokens, costUsd, verdictTally }`. Append-only; also reconstructable
 from the DB if the file is lost.
 
@@ -451,8 +494,8 @@ All via `@nestjs/config` with schema validation; document in `.env.example`.
 | `JWT_EXPIRES_IN` | no | `1d` | |
 | `SEED_USERNAME` | yes | — | |
 | `SEED_PASSWORD` | yes | — | seeded once at boot |
-| `PERSONAS_FILE` | no | `../personalities.json` | persona source |
-| `CHARGE_SHEET_SEED_FILE` | no | `../charge-sheet.seed.txt` | seed text for Case T-001 (§4.2b) |
+| `PERSONAS_FILE` | no | `personalities.json` | persona source, resolved from the Nx workspace root (`nx serve` runs from root) |
+| `CHARGE_SHEET_SEED_FILE` | no | `charge-sheet.seed.txt` | seed text for Case T-001 (§4.2b), resolved from workspace root |
 | `CORS_ORIGINS` | yes | — | comma-separated frontend origins |
 | `PORT` | no | `3000` | backend port |
 
@@ -485,7 +528,7 @@ rewrite (i.e. orchestration is a service method, not inline in the controller).
 
 ---
 
-## 11. Frontend (React + Tailwind, Vite)
+## 11. Frontend (`apps/web` — React + Tailwind, Vite)
 
 Pages:
 - **Login** — username/password → stores JWT.
@@ -537,14 +580,18 @@ verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
 - **Backend:** Jest (NestJS default) for unit + integration; **Supertest** for HTTP e2e; **nock**
   (or `msw/node`) to stub every OpenRouter HTTP call; **Testcontainers-postgres** (ephemeral real
   Postgres) for repository/e2e tests. Pure-logic units use no DB. Fixtures for `/models` and chat
-  responses live in `backend/test/fixtures/`.
-- **Frontend:** **Vitest** + **React Testing Library** (jsdom); **MSW** to mock the backend;
-  **Playwright** (optional) for one happy-path browser e2e.
+  responses live in `apps/api/test/fixtures/`.
+- **Frontend:** **Vitest** (via `@nx/vite`) + **React Testing Library** (jsdom); **MSW** to mock the
+  backend; **Playwright** (via `@nx/playwright`, in `apps/web-e2e`, optional) for one happy-path e2e.
+- **Runner:** tests run through **Nx targets** — `nx test api`, `nx test web`, `nx test shared-types`
+  — and in CI via **`nx affected -t test lint build`** so only projects touched by a change (and
+  their dependents) run. Backend unit + integration use Jest (`@nx/jest`).
 - **Hard rule — determinism:** tests NEVER call the real OpenRouter or any network. Everything is
   stubbed. Never assert on model *prose/quality* (non-deterministic) — assert on parsing, routing,
   aggregation, persistence, and structure.
 - **Coverage gate:** ≥ 80% lines/branches on the core logic modules (`tribunal/`, `openrouter/`,
-  `economy/`, `chargesheets/`, `personas/`, `auth/`). Config as a build decision, adjustable.
+  `economy/`, `chargesheets/`, `personas/`, `auth/`) plus `libs/shared-types`. Config as a build
+  decision, adjustable.
 
 ### 14.2 Backend unit tests (pure logic — highest value, DB-free)
 
@@ -617,10 +664,12 @@ verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
 ### 15.2 READMEs & operational docs
 - **Root README:** what Tribunal is, the architecture diagram (§3), run-with-docker-compose, the two
   modes, and the token-economy output.
-- **Backend README:** the env table (§9), DB + migrations, seeding (user **and** charge sheet), the
-  **OpenRouter privacy-toggle requirement (§5.3) called out prominently**, how to run tests +
-  coverage, and where run JSON files / the ledger land.
-- **Frontend README:** env (API base URL), dev server, build, test.
+- **Root README:** also documents the **Nx workspace** — install, the project layout (`apps/`,
+  `libs/`), the common `nx serve/build/test/lint/affected` commands, and the shared-types lib.
+- **`apps/api` README:** the env table (§9), DB + migrations, seeding (user **and** charge sheet),
+  the **OpenRouter privacy-toggle requirement (§5.3) called out prominently**, how to run its Nx
+  targets, and where run JSON files / the ledger land.
+- **`apps/web` README:** env (API base URL), `nx serve web`, build, test.
 - `.env.example` documents every var in §9.
 - Top-of-module docblocks for `tribunal/`, `openrouter/`, `economy/` explaining the pipeline and the
   "protocol" concept (each judge's reasoning).
@@ -634,8 +683,10 @@ verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
 
 ## 16. Build order (phased, each phase independently runnable)
 
-1. **Scaffold** — repo layout, `docker-compose` Postgres, NestJS app, Vite React app, Tailwind,
-   `.env.example`, config validation.
+1. **Scaffold (Nx)** — `create-nx-workspace` (integrated), `nx add @nx/nest @nx/react @nx/js`,
+   generate `apps/api` (Nest), `apps/web` (React+Vite), `libs/shared-types` (§3.2); wire
+   `@tribunal/shared-types` path alias, tags + `@nx/enforce-module-boundaries`, `nx.json` caching;
+   `docker-compose` Postgres, Tailwind in `apps/web`, `.env.example`, config validation.
 2. **Auth** — User entity, seed user, `/auth/login`, JWT guard, `/auth/me`; Login page.
 3. **OpenRouter module** — chat wrapper (usage+cost capture, retry/backoff), `GET /models` free
    filter + cache, `/models/free` endpoint. Smoke-test one free call end to end.
