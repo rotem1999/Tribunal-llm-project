@@ -1,32 +1,54 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 @import 'tailwindcss';
 
 /*
- * Design tokens for the Tribunal frontend.
- *
- * Names mirror the semantic tokens used by the design canvas (Tribunal.dc.html:
- * --color-bg / --color-text / --color-accent / --color-accent-300 /
- * --color-divider, plus heading/body/mono fonts) so screens built from the
- * design (SPEC §11; PRs 17-19) map straight onto these.
- *
- * NOTE: values below are a provisional "nocturne" dark palette. The exact
- * palette lives in the design system referenced by the canvas and will be
- * reconciled when the real screens are built.
+ * Nocturne design system tokens (from nocturne-export/). Dark, compact,
+ * left-aligned; single blurple accent; Inter; 8px radii; outlined buttons.
  */
 @theme {
-  --color-bg: #0e1117;
-  --color-surface: #161b22;
-  --color-text: #e6edf3;
-  --color-accent: #d9b25f;
-  --color-accent-300: #b7bec7;
-  --color-divider: #2a313c;
+  --color-bg: #161826;
+  --color-surface: #232532;
+  --color-text: #e9e9ed;
+  --color-accent: #9184d9;
+  --color-accent-2: #a7a1db;
+  --color-divider: #2a2c3a;
 
-  --font-heading: 'Georgia', 'Times New Roman', serif;
-  --font-body: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --color-neutral-100: #f3f5fe;
+  --color-neutral-300: #cfd3e5;
+  --color-neutral-500: #9397ab;
+  --color-neutral-700: #595d6c;
+  --color-neutral-800: #3f424d;
+  --color-neutral-900: #292b31;
+
+  --color-accent-300: #d2cefd;
+  --color-accent-400: #b5abfc;
+  --color-accent-500: #968ae0;
+  --color-accent-700: #5d5294;
+  --color-accent-900: #2b2741;
+
+  --color-section: #262a60;
+
+  --color-justified: #6ee7b7;
+  --color-not-justified: #f0a3a3;
+
+  --font-heading: 'Inter', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, sans-serif;
   --font-mono: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
+
+  --radius-sm: 4px;
+  --radius: 8px;
+  --radius-lg: 14px;
 }
 
+html,
 body {
   background: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-body);
+}
+
+/* Themed focus ring (never the browser default) — Nocturne guidance. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
