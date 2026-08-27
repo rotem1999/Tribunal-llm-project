@@ -3,7 +3,11 @@ import 'dotenv/config';
 import { DataSource } from 'typeorm';
 import { ChargeSheet } from './chargesheets/charge-sheet.entity';
 import { CreateChargeSheets } from './migrations/1787000001000-CreateChargeSheets';
+import { CreateRuns } from './migrations/1787000002000-CreateRuns';
 import { CreateUsers } from './migrations/1787000000000-CreateUsers';
+import { Run } from './runs/run.entity';
+import { Speech } from './runs/speech.entity';
+import { Verdict } from './runs/verdict.entity';
 import { User } from './users/user.entity';
 
 /**
@@ -14,7 +18,7 @@ import { User } from './users/user.entity';
 export default new DataSource({
   type: 'postgres',
   url: process.env.DATABASE_URL,
-  entities: [User, ChargeSheet],
-  migrations: [CreateUsers, CreateChargeSheets],
+  entities: [User, ChargeSheet, Run, Speech, Verdict],
+  migrations: [CreateUsers, CreateChargeSheets, CreateRuns],
   synchronize: false,
 });
