@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { CreateChargeSheets } from '../migrations/1787000001000-CreateChargeSheets';
 import { CreateUsers } from '../migrations/1787000000000-CreateUsers';
 
 /**
@@ -19,7 +20,7 @@ import { CreateUsers } from '../migrations/1787000000000-CreateUsers';
         autoLoadEntities: true,
         synchronize: false,
         migrationsRun: true,
-        migrations: [CreateUsers],
+        migrations: [CreateUsers, CreateChargeSheets],
       }),
     }),
   ],
