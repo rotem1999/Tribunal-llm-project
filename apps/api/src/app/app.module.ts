@@ -3,6 +3,7 @@ import { AuthModule } from '../auth/auth.module';
 import { AppConfigModule } from '../config/config.module';
 import { DatabaseModule } from '../database/database.module';
 import { OpenRouterModule } from '../openrouter/openrouter.module';
+import { PersonasModule } from '../personas/personas.module';
 import { UsersModule } from '../users/users.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -14,6 +15,7 @@ import { AppService } from './app.service';
     UsersModule,
     AuthModule,
     OpenRouterModule,
+    PersonasModule,
   ],
   controllers: [AppController],
   providers: [AppService],
