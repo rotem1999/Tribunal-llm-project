@@ -4,6 +4,7 @@ import { Layout } from '../components/Layout';
 import { Login } from '../pages/Login';
 import { NewRun } from '../pages/NewRun';
 import { RunResult } from '../pages/RunResult';
+import { History } from '../pages/History';
 
 /** Gate protected routes behind a token; otherwise route to Login (SPEC §11). */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -24,6 +25,7 @@ export function AppRoutes() {
       >
         <Route path="/new" element={<NewRun />} />
         <Route path="/runs/:id" element={<RunResult />} />
+        <Route path="/history" element={<History />} />
       </Route>
       <Route path="/" element={<Navigate to="/new" replace />} />
       <Route path="*" element={<Navigate to="/new" replace />} />
