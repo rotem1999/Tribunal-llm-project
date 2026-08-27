@@ -1,0 +1,36 @@
+# Local development infrastructure for Tribunal (SPEC §3.1).
+# Postgres is the app database; Adminer is an optional web DB browser.
+# Start with:  docker compose up -d
+# The default DATABASE_URL in .env.example points at the postgres service below.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tribunal-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tribunal
+      POSTGRES_PASSWORD: tribunal
+      POSTGRES_DB: tribunal
+    ports:
+      - '5432:5432'
+    volumes:
+      - tribunal-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U tribunal -d tribunal']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Optional: lightweight DB UI at http://localhost:8080 (start with `--profile tools`).
+  adminer:
+    image: adminer:4
+    container_name: tribunal-adminer
+    restart: unless-stopped
+    profiles: ['tools']
+    ports:
+      - '8080:8080'
+    depends_on:
+      - postgres
+
+volumes:
+  tribunal-pgdata:
