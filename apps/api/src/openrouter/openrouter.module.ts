@@ -1,10 +1,13 @@
 import { Module } from '@nestjs/common';
+import { ModelsController } from './models.controller';
+import { ModelsService } from './models.service';
 import { OpenRouterClient } from './openrouter.client';
 
-/** OpenRouter integration (SPEC §5). Exposes the chat wrapper; the model-list
- * resolution + endpoint land in the next PR. */
+/** OpenRouter integration (SPEC §5): the chat wrapper, free-model resolution,
+ * and the `/models/free` endpoint. */
 @Module({
-  providers: [OpenRouterClient],
-  exports: [OpenRouterClient],
+  controllers: [ModelsController],
+  providers: [OpenRouterClient, ModelsService],
+  exports: [OpenRouterClient, ModelsService],
 })
 export class OpenRouterModule {}
