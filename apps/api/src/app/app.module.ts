@@ -3,6 +3,7 @@ import { AuthModule } from '../auth/auth.module';
 import { ChargeSheetsModule } from '../chargesheets/chargesheets.module';
 import { AppConfigModule } from '../config/config.module';
 import { DatabaseModule } from '../database/database.module';
+import { EconomyModule } from '../economy/economy.module';
 import { OpenRouterModule } from '../openrouter/openrouter.module';
 import { PersonasModule } from '../personas/personas.module';
 import { TribunalModule } from '../tribunal/tribunal.module';
@@ -19,6 +20,7 @@ import { AppService } from './app.service';
     OpenRouterModule,
     PersonasModule,
     ChargeSheetsModule,
+    EconomyModule,
     TribunalModule,
   ],
   controllers: [AppController],

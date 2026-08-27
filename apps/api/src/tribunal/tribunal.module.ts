@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ChargeSheetsModule } from '../chargesheets/chargesheets.module';
+import { EconomyModule } from '../economy/economy.module';
 import { OpenRouterModule } from '../openrouter/openrouter.module';
 import { PersonasModule } from '../personas/personas.module';
 import { Run } from '../runs/run.entity';
@@ -15,6 +16,7 @@ import { TribunalService } from './tribunal.service';
     OpenRouterModule,
     PersonasModule,
     ChargeSheetsModule,
+    EconomyModule,
   ],
   providers: [TribunalService],
   exports: [TribunalService],

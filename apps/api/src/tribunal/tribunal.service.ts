@@ -8,6 +8,7 @@ import {
   RunStatus,
 } from '@tribunal/shared-types';
 import { ChargeSheetsService } from '../chargesheets/chargesheets.service';
+import { EconomyService } from '../economy/economy.service';
 import { OpenRouterClient } from '../openrouter/openrouter.client';
 import type { CallModelResult } from '../openrouter/openrouter.types';
 import { ModelsService } from '../openrouter/models.service';
@@ -48,6 +49,7 @@ export class TribunalService {
     @InjectRepository(Speech) private readonly speeches: Repository<Speech>,
     @InjectRepository(Verdict) private readonly verdicts: Repository<Verdict>,
     private readonly config: ConfigService,
+    private readonly economy: EconomyService,
   ) {}
 
   async runTribunal(userId: string, req: CreateRunRequest): Promise<Run> {
@@ -115,7 +117,7 @@ export class TribunalService {
     );
     totalCost += speeches.reduce((s, sp) => s + Number(sp.costUsd), 0);
     if (isOverBudget(totalCost, ceiling)) {
-      return this.abortOverBudget(run, totalCost);
+      return this.abortOverBudget(run, totalCost, speeches, []);
     }
 
     // --- Judge phase (3 in parallel, counterbalanced) ---
@@ -181,7 +183,9 @@ export class TribunalService {
     );
     totalCost += verdicts.reduce((s, v) => s + Number(v.costUsd), 0);
     if (isOverBudget(totalCost, ceiling)) {
-      return this.abortOverBudget(run, totalCost, { speechOrderByJudge });
+      return this.abortOverBudget(run, totalCost, speeches, verdicts, {
+        speechOrderByJudge,
+      });
     }
 
     // --- Finalize: tally + totals (no combined verdict) ---
@@ -196,6 +200,7 @@ export class TribunalService {
     run.totalCostUsd = totalCost;
     run.error = runError;
     run = await this.runs.save(run);
+    await this.economy.writeRun(run, speeches, verdicts);
     this.logger.log(
       `Run ${run.id} completed (${run.mode}) — tally ${JSON.stringify(run.verdictTally)}.`,
     );
@@ -205,13 +210,18 @@ export class TribunalService {
   private async abortOverBudget(
     run: Run,
     totalCost: number,
+    speeches: Speech[],
+    verdicts: Verdict[],
     extra: Partial<Run> = {},
   ): Promise<Run> {
     run.status = RunStatus.aborted_over_budget;
     run.totalCostUsd = totalCost;
     run.completedAt = new Date();
     Object.assign(run, extra);
-    return this.runs.save(run);
+    const saved = await this.runs.save(run);
+    // Persist partial economy on abort too (SPEC §5.5 step 3).
+    await this.economy.writeRun(saved, speeches, verdicts);
+    return saved;
   }
 }
 
