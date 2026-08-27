@@ -79,6 +79,9 @@ Selected per-run via a toggle. Exactly one mode runs per run.
 - **Temperatures:** advocates `0.9` (persuasive), judges `0.2` (consistent). Configurable via env.
 - **Concurrency:** the 4 advocate calls run in parallel; then the 3 judge calls run in parallel.
   Stays within OpenRouter's 20 requests/minute cap comfortably.
+- **Database runtime:** PostgreSQL runs **locally on the host** (natively installed and
+  running), not in Docker (owner decision, 2026-08-27). `DATABASE_URL` points at that local
+  instance; the repo ships **no** `docker-compose.yml`.
 
 ---
 
@@ -120,7 +123,6 @@ Tribunal/                        # Nx workspace root
 ├─ SPEC.md                       # this file
 ├─ personalities.json            # owner-provided persona definitions (§8) — REQUIRED to build/run
 ├─ charge-sheet.seed.txt         # canonical Case T-001 text; seeded into the DB on first boot (§4.2b)
-├─ docker-compose.yml            # postgres (+ optional adminer) for local dev
 ├─ .env.example                  # documents every env var (§9)
 ├─ nx.json                       # Nx config: target defaults, caching, named inputs (§3.2)
 ├─ package.json                  # ONE root package.json for the whole workspace
@@ -662,7 +664,8 @@ verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
   and the bearer scheme; `openapi.json` is emitted.
 
 ### 15.2 READMEs & operational docs
-- **Root README:** what Tribunal is, the architecture diagram (§3), run-with-docker-compose, the two
+- **Root README:** what Tribunal is, the architecture diagram (§3), how to run it against a local
+  Postgres, the two
   modes, and the token-economy output.
 - **Root README:** also documents the **Nx workspace** — install, the project layout (`apps/`,
   `libs/`), the common `nx serve/build/test/lint/affected` commands, and the shared-types lib.
@@ -686,7 +689,7 @@ verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
 1. **Scaffold (Nx)** — `create-nx-workspace` (integrated), `nx add @nx/nest @nx/react @nx/js`,
    generate `apps/api` (Nest), `apps/web` (React+Vite), `libs/shared-types` (§3.2); wire
    `@tribunal/shared-types` path alias, tags + `@nx/enforce-module-boundaries`, `nx.json` caching;
-   `docker-compose` Postgres, Tailwind in `apps/web`, `.env.example`, config validation.
+   a locally-running Postgres (no Docker), Tailwind in `apps/web`, `.env.example`, config validation.
 2. **Auth** — User entity, seed user, `/auth/login`, JWT guard, `/auth/me`; Login page.
 3. **OpenRouter module** — chat wrapper (usage+cost capture, retry/backoff), `GET /models` free
    filter + cache, `/models/free` endpoint. Smoke-test one free call end to end.
