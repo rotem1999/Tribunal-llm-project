@@ -153,7 +153,7 @@ Tribunal/                        # Nx workspace root
 │     │  ├─ components/          # SpeechCard, VerdictCard, EconomyPanel, ModeToggle, VerdictTally…
 │     │  └─ styles/
 │     ├─ index.html
-│     ├─ tailwind.config.js
+│     ├─ src/styles.css           # Tailwind v4 CSS-first: @import 'tailwindcss' + @theme tokens
 │     ├─ vite.config.ts          # Vitest configured here too
 │     └─ project.json            # Nx targets: build/serve/test (Vitest via @nx/vite)/lint
 ├─ apps/web-e2e/                 # Playwright e2e (optional) — @nx/playwright

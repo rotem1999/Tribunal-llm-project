@@ -1,1 +1,32 @@
-/* You can add global styles to this file, and also import other style files */
+@import 'tailwindcss';
+
+/*
+ * Design tokens for the Tribunal frontend.
+ *
+ * Names mirror the semantic tokens used by the design canvas (Tribunal.dc.html:
+ * --color-bg / --color-text / --color-accent / --color-accent-300 /
+ * --color-divider, plus heading/body/mono fonts) so screens built from the
+ * design (SPEC §11; PRs 17-19) map straight onto these.
+ *
+ * NOTE: values below are a provisional "nocturne" dark palette. The exact
+ * palette lives in the design system referenced by the canvas and will be
+ * reconciled when the real screens are built.
+ */
+@theme {
+  --color-bg: #0e1117;
+  --color-surface: #161b22;
+  --color-text: #e6edf3;
+  --color-accent: #d9b25f;
+  --color-accent-300: #b7bec7;
+  --color-divider: #2a313c;
+
+  --font-heading: 'Georgia', 'Times New Roman', serif;
+  --font-body: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', 'Menlo', monospace;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+}
