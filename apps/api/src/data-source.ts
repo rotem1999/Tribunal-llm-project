@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import 'dotenv/config';
 import { DataSource } from 'typeorm';
 import { User } from './users/user.entity';
-import { CreateUsers1787000000000 } from './migrations/1787000000000-CreateUsers';
+import { CreateUsers } from './migrations/1787000000000-CreateUsers';
 
 /**
  * Standalone DataSource for the TypeORM CLI (migration generate/run/revert).
@@ -15,6 +15,6 @@ export default new DataSource({
   type: 'postgres',
   url: process.env.DATABASE_URL,
   entities: [User],
-  migrations: [CreateUsers1787000000000],
+  migrations: [CreateUsers],
   synchronize: false,
 });

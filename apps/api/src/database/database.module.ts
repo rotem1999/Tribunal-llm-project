@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { CreateUsers1787000000000 } from '../migrations/1787000000000-CreateUsers';
+import { CreateUsers } from '../migrations/1787000000000-CreateUsers';
 
 /**
  * Postgres connection (SPEC §4). `synchronize` is OFF — schema changes go
@@ -19,7 +19,7 @@ import { CreateUsers1787000000000 } from '../migrations/1787000000000-CreateUser
         autoLoadEntities: true,
         synchronize: false,
         migrationsRun: true,
-        migrations: [CreateUsers1787000000000],
+        migrations: [CreateUsers],
       }),
     }),
   ],

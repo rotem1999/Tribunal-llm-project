@@ -4,7 +4,7 @@ import { MigrationInterface, QueryRunner, Table } from 'typeorm';
  * Initial schema: the `users` table (SPEC §4.1). Uses Postgres' built-in
  * `gen_random_uuid()` (core since PG13) so no extension is required.
  */
-export class CreateUsers1787000000000 implements MigrationInterface {
+export class CreateUsers implements MigrationInterface {
   name = 'CreateUsers1787000000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
