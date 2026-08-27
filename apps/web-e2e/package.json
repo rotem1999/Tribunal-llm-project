@@ -1,0 +1,14 @@
+{
+  "name": "@tribunal/web-e2e",
+  "version": "0.0.1",
+  "private": true,
+  "nx": {
+    "implicitDependencies": [
+      "@tribunal/web"
+    ],
+    "tags": [
+      "scope:web",
+      "type:app"
+    ]
+  }
+}

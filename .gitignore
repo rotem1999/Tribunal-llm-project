@@ -4,14 +4,25 @@
 node_modules/
 dist/
 tmp/
+out-tsc/
 /.nx/cache
 /.nx/workspace-data
+/.nx/polygraph
+/.nx/self-healing
+/.nx/migrate-runs
 coverage/
+test-output/
+vite.config.*.timestamp*
 
 # Env & secrets — never commit real values (keep the example)
 .env
 .env.*
 !.env.example
+
+# IDEs / OS
+/.idea
+.DS_Store
+Thumbs.db
 
 # Generated run output (SPEC §6): ignore the artifacts BY FILE, never the whole
 # apps/api/data/ folder — so apps/api/data/CLAUDE.md stays tracked.
