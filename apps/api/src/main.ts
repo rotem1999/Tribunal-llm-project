@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app/app.module';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
+import { setupSwagger } from './swagger';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -24,6 +25,8 @@ async function bootstrap() {
       .filter(Boolean),
     credentials: true,
   });
+  // Swagger UI at /api/docs + openapi.json (SPEC §15.1).
+  setupSwagger(app);
   const port = config.get<string>('PORT') ?? 3000;
   await app.listen(port);
   Logger.log(
