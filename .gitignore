@@ -34,3 +34,6 @@ Thumbs.db
 # file that sits inside a fully-ignored directory, which is exactly why the run
 # output above is ignored by file rather than by folder.)
 !**/CLAUDE.md
+
+# Generated OpenAPI artifact (SPEC §15.1)
+/apps/api/openapi.json
