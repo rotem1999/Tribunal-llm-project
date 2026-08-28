@@ -21,8 +21,8 @@ export class ChargeSheetsController {
   @ApiOperation({ summary: 'Get the active charge sheet.' })
   @ApiResponse({ status: 200 })
   @ApiResponse({ status: 404, description: 'No active charge sheet.' })
-  getActive(): Promise<ChargeSheet> {
-    return this.sheets.getActive();
+  async getActive(): Promise<ChargeSheet> {
+    return toChargeSheetDto(await this.sheets.getActive());
   }
 
   @Get('charge-sheets')
@@ -45,10 +45,29 @@ export class ChargeSheetsController {
   })
   @ApiResponse({ status: 200 })
   @ApiResponse({ status: 404 })
-  update(
+  async update(
     @Param('id') id: string,
     @Body() dto: PatchChargeSheetDto,
   ): Promise<ChargeSheet> {
-    return this.sheets.update(id, dto);
+    return toChargeSheetDto(await this.sheets.update(id, dto));
   }
+}
+
+/** Map the entity (Date timestamps) onto the shared contract (ISO strings). */
+function toChargeSheetDto(s: {
+  id: string;
+  title: string;
+  content: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}): ChargeSheet {
+  return {
+    id: s.id,
+    title: s.title,
+    content: s.content,
+    isActive: s.isActive,
+    createdAt: s.createdAt.toISOString(),
+    updatedAt: s.updatedAt.toISOString(),
+  };
 }

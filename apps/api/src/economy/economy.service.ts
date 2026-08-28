@@ -1,6 +1,6 @@
 import { appendFile, mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { LedgerEntry, RunEconomy } from '@tribunal/shared-types';
@@ -16,7 +16,6 @@ import { buildRunEconomy, toLedgerEntry } from './economy.builder';
  */
 @Injectable()
 export class EconomyService {
-  private readonly logger = new Logger(EconomyService.name);
   private readonly dataDir = resolve(process.cwd(), 'apps/api/data');
 
   constructor(
