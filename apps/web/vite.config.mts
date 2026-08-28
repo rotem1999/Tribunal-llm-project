@@ -27,4 +27,18 @@ export default defineConfig(() => ({
       transformMixedEsModules: true,
     },
   },
+  test: {
+    name: 'web',
+    watch: false,
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: ['./src/test-setup.ts'],
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    css: false,
+    reporters: ['default'],
+    coverage: {
+      provider: 'v8',
+      reportsDirectory: './test-output/vitest/coverage',
+    },
+  },
 }));
