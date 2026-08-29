@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   DataPolicyError,
@@ -22,7 +22,6 @@ const MAX_ATTEMPTS = 4;
  */
 @Injectable()
 export class OpenRouterClient {
-  private readonly logger = new Logger(OpenRouterClient.name);
 
   constructor(private readonly config: ConfigService) {}
 
