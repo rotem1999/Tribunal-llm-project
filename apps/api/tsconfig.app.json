@@ -10,5 +10,15 @@
     "target": "es2021"
   },
   "include": ["src/**/*.ts"],
-  "exclude": []
+  "exclude": [
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts",
+    "test/**/*.ts",
+    "jest.config.ts"
+  ],
+  "references": [
+    {
+      "path": "../../libs/shared-types/tsconfig.lib.json"
+    }
+  ]
 }
