@@ -12,8 +12,10 @@ describe('EconomyPanel', () => {
   it('renders a per-persona row for each persona with tokens and cost', () => {
     render(<EconomyPanel economy={makeEconomy()} />);
 
-    expect(screen.getByText('advocate_support')).toBeInTheDocument();
-    expect(screen.getByText('judge_one')).toBeInTheDocument();
+    // The per-persona table shows the display NAME, not the key (SPEC §6a/§11).
+    expect(screen.getByText('Jon Snow')).toBeInTheDocument();
+    expect(screen.getByText('Presiding Justice')).toBeInTheDocument();
+    expect(screen.queryByText('advocate_support')).not.toBeInTheDocument();
     // judge_one has a non-zero cost formatted to 6dp.
     expect(screen.getByText('$0.001234')).toBeInTheDocument();
     // advocate_support token count.

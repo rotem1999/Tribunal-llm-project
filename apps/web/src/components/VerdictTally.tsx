@@ -1,25 +1,19 @@
 import type { VerdictTally as Tally } from '@tribunal/shared-types';
 
 /**
- * The non-binding vote tally (SPEC §11 / D5). Explicitly NOT a combined verdict —
- * the tribunal issues none.
+ * Non-binding count of the 3 verdicts (SPEC §11 / D5) — a bare count, no
+ * disclaimer copy (UX rule 1). The tribunal issues no combined verdict; that
+ * behavior stands regardless of what is shown here.
  */
 export function VerdictTally({ tally }: { tally: Tally | null }) {
   if (!tally) return null;
-  const total = tally.justified + tally.not_justified;
-  const lead =
-    tally.justified === tally.not_justified
-      ? 'split'
-      : tally.justified > tally.not_justified
-        ? 'justified'
-        : 'not justified';
   return (
-    <div className="rounded-lg border border-divider bg-surface/60 px-4 py-3 text-sm text-neutral-300">
-      <span className="text-text">
-        {Math.max(tally.justified, tally.not_justified)} of {total} judges:{' '}
-        {lead}
-      </span>{' '}
-      — the tribunal issues no combined verdict.
+    <div className="text-sm text-neutral-400">
+      <span className="text-justified">Justified {tally.justified}</span>
+      <span className="px-2 text-neutral-600">·</span>
+      <span className="text-not-justified">
+        Not justified {tally.not_justified}
+      </span>
     </div>
   );
 }
