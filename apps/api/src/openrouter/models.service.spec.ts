@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { ConfigService } from '@nestjs/config';
 import { ModelsService } from './models.service';
-import { DataPolicyError, OpenRouterError } from './openrouter.errors';
+import {
+  DataPolicyError,
+  ModelUnavailableError,
+  OpenRouterError,
+} from './openrouter.errors';
 
 /**
  * Free-model roster + per-mode assignment (SPEC §5.2). No real network: the
@@ -252,5 +256,115 @@ describe('ModelsService.assignModeBModels (Mode B)', () => {
     const service = new ModelsService(makeConfig());
     const assignment = await service.assignModeBModels(personaKeys);
     expect(new Set(Object.values(assignment))).toEqual(new Set(['free/a']));
+  });
+});
+
+describe('ModelsService.markUnavailable — restricted-model fallback', () => {
+  // Roster sorted by context desc -> [free/big, free/mid, free/a].
+  beforeEach(() => {
+    mockModelsFetch([freeMid, freeBig, freeA]);
+  });
+
+  it('excludes a marked model from getFreeModels() and keeps the rest in order', async () => {
+    const service = new ModelsService(makeConfig());
+    service.markUnavailable('free/big'); // the top model
+    const ids = (await service.getFreeModels()).map((m) => m.id);
+    expect(ids).not.toContain('free/big');
+    expect(ids).toEqual(['free/mid', 'free/a']);
+  });
+
+  it('resolveModeAModel() returns the next model when the top one is unavailable', async () => {
+    const service = new ModelsService(makeConfig());
+    // Without marking, the top model would be chosen.
+    expect(await service.resolveModeAModel()).toBe('free/big');
+    service.markUnavailable('free/big');
+    expect(await service.resolveModeAModel()).toBe('free/mid');
+  });
+
+  it('does NOT honor a preferred model that has been marked unavailable', async () => {
+    const service = new ModelsService(makeConfig());
+    // Sanity: preferred is honored while still usable.
+    expect(await service.resolveModeAModel('free/mid')).toBe('free/mid');
+    service.markUnavailable('free/mid');
+    // Now the excluded preferred must fall back to the top usable model.
+    expect(await service.resolveModeAModel('free/mid')).toBe('free/big');
+  });
+
+  it('marking is cumulative — each marked model is skipped', async () => {
+    const service = new ModelsService(makeConfig());
+    service.markUnavailable('free/big');
+    service.markUnavailable('free/mid');
+    expect(await service.resolveModeAModel()).toBe('free/a');
+    expect((await service.getFreeModels()).map((m) => m.id)).toEqual(['free/a']);
+  });
+
+  it('marking an id that is not in the roster is a no-op', async () => {
+    const service = new ModelsService(makeConfig());
+    service.markUnavailable('does/not-exist');
+    expect((await service.getFreeModels()).map((m) => m.id)).toEqual([
+      'free/big',
+      'free/mid',
+      'free/a',
+    ]);
+  });
+});
+
+describe('ModelsService.pickReplacement', () => {
+  beforeEach(() => {
+    mockModelsFetch([freeMid, freeBig, freeA]); // sorted -> big, mid, a
+  });
+
+  it('returns the top free model not in the exclude set', async () => {
+    const service = new ModelsService(makeConfig());
+    expect(await service.pickReplacement(new Set())).toBe('free/big');
+    expect(await service.pickReplacement(new Set(['free/big']))).toBe('free/mid');
+    expect(await service.pickReplacement(new Set(['free/big', 'free/mid']))).toBe(
+      'free/a',
+    );
+  });
+
+  it('returns undefined when every free model is excluded', async () => {
+    const service = new ModelsService(makeConfig());
+    const all = new Set(['free/big', 'free/mid', 'free/a']);
+    expect(await service.pickReplacement(all)).toBeUndefined();
+  });
+
+  it('also skips models already marked unavailable (they are gone from the roster)', async () => {
+    const service = new ModelsService(makeConfig());
+    service.markUnavailable('free/big');
+    // free/big is excluded by markUnavailable; exclude set removes free/mid too.
+    expect(await service.pickReplacement(new Set(['free/mid']))).toBe('free/a');
+  });
+});
+
+describe('ModelsService.getFreeModels — all free models unavailable', () => {
+  it('throws ModelUnavailableError (NOT DataPolicyError) when a non-empty roster is fully marked', async () => {
+    mockModelsFetch([freeMid, freeBig, freeA]);
+    const service = new ModelsService(makeConfig());
+    service.markUnavailable('free/big');
+    service.markUnavailable('free/mid');
+    service.markUnavailable('free/a');
+    const err = await service.getFreeModels().catch((e) => e);
+    expect(err).toBeInstanceOf(ModelUnavailableError);
+    expect(err).not.toBeInstanceOf(DataPolicyError);
+    expect(err.message).toMatch(/every free model was rejected/i);
+  });
+
+  it('an empty / paid-only roster still throws DataPolicyError (not ModelUnavailableError)', async () => {
+    mockModelsFetch([fullyPaid, freePromptPaidCompletion]);
+    const service = new ModelsService(makeConfig());
+    const err = await service.getFreeModels().catch((e) => e);
+    expect(err).toBeInstanceOf(DataPolicyError);
+    expect(err).not.toBeInstanceOf(ModelUnavailableError);
+  });
+
+  it('resolveModeAModel() surfaces ModelUnavailableError when all free models are marked', async () => {
+    mockModelsFetch([freeBig, freeA]);
+    const service = new ModelsService(makeConfig());
+    service.markUnavailable('free/big');
+    service.markUnavailable('free/a');
+    await expect(service.resolveModeAModel('free/big')).rejects.toBeInstanceOf(
+      ModelUnavailableError,
+    );
   });
 });

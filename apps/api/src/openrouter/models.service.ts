@@ -1,7 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { FreeModel } from '@tribunal/shared-types';
-import { DataPolicyError, OpenRouterError } from './openrouter.errors';
+import {
+  DataPolicyError,
+  ModelUnavailableError,
+  OpenRouterError,
+} from './openrouter.errors';
 
 interface RawModel {
   id: string;
@@ -18,21 +22,38 @@ const CACHE_TTL_MS = 10 * 60 * 1000; // ~10 min (SPEC §5.2)
 @Injectable()
 export class ModelsService {
   private cache?: { at: number; models: FreeModel[] };
+  /**
+   * Models that returned a 403 (restricted / not callable by this account, e.g.
+   * free models gated to approved apps). Learned at call time and excluded from
+   * every subsequent resolution so a bad pick is not chosen again this session.
+   */
+  private readonly unavailable = new Set<string>();
 
   constructor(private readonly config: ConfigService) {}
 
-  /** Live, cached list of zero-price models (highest context first). */
+  /** Mark a model unusable for the rest of this process (see {@link unavailable}). */
+  markUnavailable(modelId: string): void {
+    this.unavailable.add(modelId);
+  }
+
+  /** Live, cached zero-price roster (highest context first), minus any model
+   * learned to be restricted for this account. */
   async getFreeModels(force = false): Promise<FreeModel[]> {
-    if (!force && this.cache && Date.now() - this.cache.at < CACHE_TTL_MS) {
-      return this.cache.models;
+    if (force || !this.cache || Date.now() - this.cache.at >= CACHE_TTL_MS) {
+      this.cache = { at: Date.now(), models: this.filterFree(await this.fetchModels()) };
     }
-    const models = this.filterFree(await this.fetchModels());
-    if (models.length === 0) {
-      // No free endpoints — almost always the §5.3 data-policy situation.
+    if (this.cache.models.length === 0) {
+      // No free endpoints at all — almost always the §5.3 data-policy situation.
       throw new DataPolicyError();
     }
-    this.cache = { at: Date.now(), models };
-    return models;
+    const usable = this.cache.models.filter((m) => !this.unavailable.has(m.id));
+    if (usable.length === 0) {
+      throw new ModelUnavailableError(
+        this.cache.models[0].id,
+        'Every free model was rejected as restricted/unavailable for this account. Set MODE_A_MODEL to a model that works, or enable a paid model.',
+      );
+    }
+    return usable;
   }
 
   /** Mode A: honor MODE_A_MODEL when still free, else the top free model. */
@@ -40,6 +61,13 @@ export class ModelsService {
     const free = await this.getFreeModels();
     if (preferred && free.some((m) => m.id === preferred)) return preferred;
     return free[0].id;
+  }
+
+  /** The top free model not in `exclude` — used to swap in a replacement when a
+   * chosen model turns out to be restricted. Undefined if none remain. */
+  async pickReplacement(exclude: ReadonlySet<string>): Promise<string | undefined> {
+    const free = await this.getFreeModels();
+    return free.find((m) => !exclude.has(m.id))?.id;
   }
 
   /**

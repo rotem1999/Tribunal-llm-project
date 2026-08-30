@@ -10,7 +10,11 @@ import {
 import { ChargeSheetsService } from '../chargesheets/chargesheets.service';
 import { EconomyService } from '../economy/economy.service';
 import { OpenRouterClient } from '../openrouter/openrouter.client';
-import type { CallModelResult } from '../openrouter/openrouter.types';
+import { ModelUnavailableError } from '../openrouter/openrouter.errors';
+import type {
+  CallModelParams,
+  CallModelResult,
+} from '../openrouter/openrouter.types';
 import { ModelsService } from '../openrouter/models.service';
 import { PersonasService } from '../personas/personas.service';
 import { Run } from '../runs/run.entity';
@@ -52,6 +56,49 @@ export class TribunalService {
     private readonly economy: EconomyService,
   ) {}
 
+  /** Max times a single persona call will swap to another free model. */
+  private static readonly MAX_MODEL_SWAPS = 4;
+
+  /**
+   * Call a persona's model, transparently swapping to another free model when
+   * the chosen one is restricted/unavailable (OpenRouter 403 — e.g. free models
+   * gated to approved apps; SPEC §5.2). Returns the model actually used so
+   * persistence records the truth. `used` tracks models already placed this run
+   * so Mode B keeps its per-persona models distinct where possible.
+   */
+  private async callPersona(
+    params: Omit<CallModelParams, 'model'>,
+    startModel: string,
+    used: Set<string>,
+  ): Promise<{ res: CallModelResult; model: string }> {
+    let model = startModel;
+    const tried = new Set<string>();
+    for (let attempt = 0; ; attempt++) {
+      tried.add(model);
+      try {
+        const res = await this.openrouter.callModel({ ...params, model });
+        used.add(model);
+        return { res, model };
+      } catch (err) {
+        if (
+          !(err instanceof ModelUnavailableError) ||
+          attempt >= TribunalService.MAX_MODEL_SWAPS
+        ) {
+          throw err;
+        }
+        this.models.markUnavailable(model);
+        const next = await this.models.pickReplacement(
+          new Set([...used, ...tried]),
+        );
+        if (!next) throw err;
+        this.logger.warn(
+          `Model "${model}" is restricted/unavailable — retrying persona with "${next}".`,
+        );
+        model = next;
+      }
+    }
+  }
+
   async runTribunal(userId: string, req: CreateRunRequest): Promise<Run> {
     const sheet = req.chargeSheetId
       ? await this.chargeSheets.getById(req.chargeSheetId)
@@ -89,19 +136,20 @@ export class TribunalService {
     let totalCost = 0;
     let runError: string | null = null;
 
+    // Models actually used this run (after any restricted-model swaps), so
+    // Mode B stays distinct where possible and persistence records the truth.
+    const usedModels = new Set<string>();
+
     // --- Advocate phase (4 in parallel) ---
     const advocates = this.personas.getAdvocates();
     const speeches = await Promise.all(
       advocates.map(async (adv) => {
-        const model = modelFor(adv.key);
         const { system, user } = buildAdvocatePrompt(adv, sheet.content);
-        const res = await this.openrouter.callModel({
-          model,
-          systemPrompt: system,
-          userPrompt: user,
-          temperature: advTemp,
-          maxTokens,
-        });
+        const { res, model } = await this.callPersona(
+          { systemPrompt: system, userPrompt: user, temperature: advTemp, maxTokens },
+          modelFor(adv.key),
+          usedModels,
+        );
         return this.speeches.save(
           this.speeches.create({
             runId: run.id,
@@ -115,6 +163,12 @@ export class TribunalService {
         );
       }),
     );
+    // Mode A: if the auto/pinned model was swapped out, adopt the model that
+    // actually worked so the judges use it and the Run records it.
+    if (req.mode === RunMode.A_single && speeches.length > 0) {
+      modelSingle = speeches[0].model;
+      run.modelSingle = modelSingle;
+    }
     totalCost += speeches.reduce((s, sp) => s + Number(sp.costUsd), 0);
     if (isOverBudget(totalCost, ceiling)) {
       return this.abortOverBudget(run, totalCost, speeches, []);
@@ -131,16 +185,13 @@ export class TribunalService {
         const ordered = counterbalancedOrder(speechViews, i);
         const shownOrder = ordered.map((o) => o.personaKey);
         speechOrderByJudge[judge.key] = shownOrder;
-        const model = modelFor(judge.key);
         const { system, user } = buildJudgePrompt(judge, sheet.content, ordered);
 
-        const res = await this.openrouter.callModel({
-          model,
-          systemPrompt: system,
-          userPrompt: user,
-          temperature: judgeTemp,
-          maxTokens,
-        });
+        const { res, model } = await this.callPersona(
+          { systemPrompt: system, userPrompt: user, temperature: judgeTemp, maxTokens },
+          modelFor(judge.key),
+          usedModels,
+        );
         let raw = res.content;
         let usage = res.usage;
         let parsed = parseVerdict(res.content);

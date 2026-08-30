@@ -40,3 +40,21 @@ export class OpenRouterError extends Error {
     this.name = 'OpenRouterError';
   }
 }
+
+/**
+ * OpenRouter 403 for a specific model — e.g. a nominally "free" model that is
+ * gated to approved agentic-harness apps ("only available on agentic
+ * harnesses"), or otherwise not callable by this account. Not a generic
+ * failure: the run pipeline marks the model unavailable and retries with
+ * another free model (SPEC §5.2, §5.4). Only surfaces to the user (with this
+ * actionable message) when no free model works.
+ */
+export class ModelUnavailableError extends OpenRouterError {
+  constructor(
+    readonly model: string,
+    message = `The model "${model}" is not available for direct API use for this account — some free models are restricted to approved apps. Pick a different free model, or set MODE_A_MODEL to one that works.`,
+  ) {
+    super(message, 403);
+    this.name = 'ModelUnavailableError';
+  }
+}
