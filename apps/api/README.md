@@ -34,6 +34,12 @@ data policy"*. The API detects this specific case and surfaces an actionable mes
 model") rather than a generic crash. Charge sheets in Tribunal are always fictional/demo, so enabling
 these toggles is acceptable; if you'd rather not, pin a paid model via `MODE_A_MODEL`.
 
+Separately, some individual "free" models are **gated to approved apps** and reject direct calls with a
+`403` ("only available on agentic harnesses"). The run pipeline treats a `403` as "this model is
+unavailable": it records the model as restricted, drops it from resolution, and retries the persona on
+another free model (see [Run model](#run-model--the-protocol)). Only if *every* free model is
+restricted does a run fail — with an actionable `422`, not a generic error.
+
 ## Environment
 
 All configuration is loaded through `@nestjs/config` and validated against a Zod schema at boot
@@ -63,6 +69,10 @@ and fill in the required values.
 | `CORS_ORIGINS` | **yes** | — | comma-separated allowed frontend origins |
 | `PORT` | no | `3000` | backend port |
 
+A **blank** optional URL var is treated as unset — e.g. leaving `OPENROUTER_APP_URL=` empty (as
+`.env.example` ships it) is fine, and a blank `OPENROUTER_BASE_URL=` falls back to its default rather
+than failing validation.
+
 ## Database & migrations
 
 PostgreSQL runs **locally on the host** (natively installed, not in Docker — owner decision). Point
@@ -89,13 +99,23 @@ npx typeorm-ts-node-esm migration:revert -d apps/api/src/data-source.ts
 Seeding is idempotent: the user is created from `SEED_USERNAME`/`SEED_PASSWORD` (password hashed with
 argon2id) and the active charge sheet from `CHARGE_SHEET_SEED_FILE` only if they don't already exist.
 
-## Run pipeline & the "protocol"
+## Run model & the "protocol"
+
+`POST /runs` is **asynchronous**: it creates the run row and returns `{ runId }` immediately, then the
+pipeline executes in the background. A run moves through statuses `pending` → `running` →
+`completed` (or `failed`, or `aborted_over_budget`), and background execution never rejects — any throw
+is caught and persisted as a `failed` status with an `error` for the client to read. The frontend
+polls **`GET /runs/:id/progress`** — a lightweight `{ status, phase, completedPersonaKeys, error }`
+where `phase` is `advocates` → `judges` → `done` — to drive the live circle animation, then fetches the
+full run once it's terminal.
 
 One run = **7 LLM calls**: the 4 advocate calls run in parallel, then the 3 judge calls run in
 parallel. Each advocate is *blind* — it sees only its own persona and the charge sheet, never another
 advocate's speech. Each judge sees the charge sheet plus all four speeches, in a **counterbalanced
 order** (rotated per judge and recorded) to blunt the position bias LLM judges show toward whichever
-argument they read first.
+argument they read first. If a persona's model returns a `403` (restricted/gated), the call swaps to
+another free model and records the model actually used; Mode B keeps its per-persona models distinct
+where possible.
 
 Each judge's written reasoning is its **protocol** — the account of *how* it reached its decision. The
 pipeline parses each judge's answer into `{ decision, confidence, reasoning }` and **never** collapses
@@ -103,8 +123,8 @@ the three into an authoritative combined verdict. The run snapshots the charge s
 cost ceiling up front, so a mid-flight edit to the charge sheet can't change an in-progress run.
 
 Core modules carry top-of-file docblocks explaining the pipeline: `src/tribunal/` (orchestration),
-`src/openrouter/` (chat wrapper, model resolution, retry/backoff), and `src/economy/` (cost
-aggregation and file/ledger writing).
+`src/openrouter/` (chat wrapper, model resolution, retry/backoff, restricted-model handling), and
+`src/economy/` (cost aggregation and file/ledger writing).
 
 ## Where run files land
 
@@ -118,7 +138,19 @@ UI.
 
 ## API surface
 
-Every route except `POST /auth/login` requires `Authorization: Bearer <jwt>`. The full contract —
-auth, `/models/free`, charge-sheet read/list/patch, run create/list/detail, and the economy
-endpoints — is documented in Swagger UI at **`/api/docs`** when the server is running, and in `SPEC.md`
-§10.
+Every route except `POST /auth/login` requires `Authorization: Bearer <jwt>`. In brief:
+
+| Method & path | Purpose |
+|---------------|---------|
+| `POST /auth/login`, `GET /auth/me` | log in; current user |
+| `GET /personas` | the roster `[{ key, name, role, side? }]` (no system prompts) — powers the live circle |
+| `GET /models/free` | the live, cached zero-price model list |
+| `GET /charge-sheet`, `GET /charge-sheets`, `PATCH /charge-sheet/:id` | active sheet; list; edit (not surfaced in the v1 UI) |
+| `POST /runs` | start a run (async) → `{ runId }` |
+| `GET /runs`, `GET /runs/:id` | run summaries; full run detail |
+| `GET /runs/:id/progress` | lightweight live progress for the animation |
+| `GET /runs/:id/economy`, `GET /economy/ledger` | per-run economy file; cumulative ledger |
+
+The full contract — request/response schemas, enums, the bearer scheme, and the `401` / `402` / `404` /
+`422` error bodies — is documented in Swagger UI at **`/api/docs`** when the server is running, and in
+`SPEC.md` §10.
