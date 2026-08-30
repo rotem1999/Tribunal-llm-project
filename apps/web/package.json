@@ -1,0 +1,11 @@
+{
+  "name": "@tribunal/web",
+  "version": "0.0.1",
+  "private": true,
+  "nx": {
+    "tags": [
+      "scope:web",
+      "type:app"
+    ]
+  }
+}

@@ -22,8 +22,13 @@ describing an alleged crime) using LLM personas:
   and produces a **verdict** (justified / not_justified + confidence + written reasoning = the
   "protocol"). "Justified" favors the accused (the act was lawful/necessary); "not_justified" is
   against the accused.
-- The system's **final result** is the majority of the three judges' binary decisions, presented
-  with each judge's full reasoning and a **token/cost economy** report for the run.
+- The system's **output** is exactly what `INTENT.txt` specifies (lines 14–15): the **three
+  independent verdicts** (`verd1`, `verd2`, `verd3`), each with its **protocol** (how that judge
+  decided), plus the **code budget** (token/cost economy for the run). The tribunal does **not**
+  combine the three opinions into a single verdict and does not impose a sentence — this is required
+  by INTENT's output clause and stated explicitly in the source dossier's scope note. A non-binding
+  vote *tally* may be shown for convenience (see D5/§4.3), but it is a display of the three verdicts,
+  not a ruling.
 
 One full run = **7 LLM calls** (4 advocates, then 3 judges).
 
@@ -54,7 +59,7 @@ Selected per-run via a toggle. Exactly one mode runs per run.
 | D2 | Auth / user model | **Single seeded user + JWT.** One username/password seeded at setup; JWT gates the API. No public registration. |
 | D3 | Personalities configurable? | **Fully baked-in, loaded from an owner-provided file.** Not editable in the UI. See §8 for the required file contract. |
 | D4 | Debate depth | **Single blind round.** Advocates get only their persona + charge. Judges get persona + charge + all 4 speeches. No rebuttals. |
-| D5 | Verdict format | **Justified / Not_justified + confidence (0–100) + reasoning.** Final result = **majority** of the 3 binary decisions (odd count ⇒ never a tie). Confidence is displayed but does **not** weight the tally. Labels are `justified` / `not_justified` (not guilty/not-guilty) because a tribunal decides whether the alleged act was *justified* — matching the source dossier's scope note ("The Tribunal decides justified / not justified and gives reasons"). `justified` = for the accused; `not_justified` = against. |
+| D5 | Verdict format | **Justified / Not_justified + confidence (0–100) + reasoning (= the protocol).** Labels are `justified` / `not_justified` (not guilty/not-guilty) because a tribunal decides whether the alleged act was *justified* — matching the source dossier's scope note ("The Tribunal decides justified / not justified and gives reasons"). `justified` = for the accused; `not_justified` = against. **Revised (INTENT re-check):** the system does **not** produce an authoritative combined/majority verdict — INTENT's output clause lists only the 3 verdicts + protocols + code budget, and the dossier scope note says it "does not… combine the three opinions into one verdict." An optional, clearly-labeled **non-binding vote tally** (counts of the 3) may be shown for convenience only. |
 | D6 | Mode B meaning | **Different model per persona** (from the live free list). Mode A = one model for all. |
 | D7 | Mode selection | **Per-run toggle.** One mode per run. |
 | D8 | Cost/economy output | **Per-run JSON file + cumulative ledger file**, both persisted and downloadable; the run's economy is **also shown in the UI** alongside the final output. |
@@ -74,67 +79,112 @@ Selected per-run via a toggle. Exactly one mode runs per run.
 - **Temperatures:** advocates `0.9` (persuasive), judges `0.2` (consistent). Configurable via env.
 - **Concurrency:** the 4 advocate calls run in parallel; then the 3 judge calls run in parallel.
   Stays within OpenRouter's 20 requests/minute cap comfortably.
+- **Database runtime:** PostgreSQL runs **locally on the host** (natively installed and
+  running), not in Docker (owner decision, 2026-08-27). `DATABASE_URL` points at that local
+  instance; the repo ships **no** `docker-compose.yml`.
 
 ---
 
 ## 3. Architecture overview
 
 ```
-┌────────────────────┐        JWT (Bearer)        ┌─────────────────────────────┐
-│  Frontend (React)  │  ───────────────────────▶  │  Backend (NestJS + TS)      │
-│  Vite + Tailwind   │  ◀───────────────────────  │  TypeORM ▶ PostgreSQL       │
-└────────────────────┘        JSON over HTTP       │  OpenRouter client          │
-                                                    └──────────────┬──────────────┘
-                                                                   │ HTTPS
-                                                                   ▼
-                                                     OpenRouter API (chat + models)
+                         ┌──────────────────────── Nx monorepo ────────────────────────┐
+┌────────────────────┐   │  apps/web (React+Tailwind+Vite)     apps/api (NestJS+TS)     │
+│   Browser (SPA)    │◀──┼─▶  ── JWT (Bearer), JSON over HTTP ─▶  TypeORM ▶ PostgreSQL   │
+└────────────────────┘   │        ▲                                  │  OpenRouter client │
+                         │        └── imports types from ───┐        └────────┬──────────┘
+                         │        libs/shared-types  ◀──────┘                 │ HTTPS      │
+                         └──────────────────────────────────────────────────┼────────────┘
+                                                                             ▼
+                                                              OpenRouter API (chat + models)
 ```
 
-- **Backend:** NestJS (TypeScript), TypeORM, PostgreSQL. Owns all LLM orchestration, cost
-  accounting, persistence, auth. The frontend never talks to OpenRouter directly (the API key
+- **Monorepo:** a single **Nx** workspace holds both apps and the code they share (§3.2). Package
+  scope is `@nx/*` (current, not `@nrwl/*`).
+- **`apps/api` (Backend):** NestJS (TypeScript), TypeORM, PostgreSQL. Owns all LLM orchestration,
+  cost accounting, persistence, auth. The frontend never talks to OpenRouter directly (the API key
   stays server-side).
-- **Frontend:** React + Tailwind (build with Vite). Talks only to the backend.
+- **`apps/web` (Frontend):** React + Tailwind (Vite). Talks only to the backend.
+- **`libs/shared-types` (shared):** the request/response **interfaces** and **enums** (`mode`,
+  `decision`, run `status`) are defined **once** here and imported by both apps — the main reason to
+  use a monorepo; it removes front/back contract drift. **Framework-free TypeScript only** (no
+  NestJS, class-validator, or Swagger imports — those would bloat the browser bundle). Consequence:
+  the api's DTO *classes* (which carry `@ApiProperty` + class-validator decorators for Swagger and
+  validation, §15.1) live in `apps/api` and **`implements`** the shared interfaces; `apps/web`
+  imports only the plain interfaces/enums. One source of truth for the shape, decorators only where
+  they're needed.
 - **Auth:** JWT bearer tokens between front and back.
 
-### 3.1 Repository layout
+### 3.1 Repository layout (Nx workspace)
 
 ```
-Tribunal/
-├─ INTENT.txt                 # original brief (do not edit)
-├─ SPEC.md                    # this file
-├─ personalities.json         # owner-provided persona definitions (see §8) — REQUIRED to build/run
-├─ charge-sheet.seed.txt      # canonical Case T-001 text; seeded into the DB on first boot (§4.2b)
-├─ docker-compose.yml         # postgres (+ optional adminer) for local dev
-├─ .env.example               # documents every env var (see §9)
-├─ backend/
-│  ├─ src/
-│  │  ├─ main.ts
-│  │  ├─ app.module.ts
-│  │  ├─ config/                     # env loading + validation (@nestjs/config + zod/joi)
-│  │  ├─ auth/                       # login, JWT strategy, guard, seed user
-│  │  ├─ users/                      # User entity + seed
-│  │  ├─ personas/                   # loads & validates personalities.json at boot
-│  │  ├─ chargesheets/               # ChargeSheet entity, seed from charge-sheet.seed.txt, CRUD
-│  │  ├─ openrouter/                 # HTTP client, model list cache, chat wrapper, retry/backoff
-│  │  ├─ tribunal/                   # orchestration: run a tribunal (advocates → judges → verdict)
-│  │  ├─ runs/                       # Run/Speech/Verdict entities, run controller, economy export
-│  │  └─ economy/                    # cost aggregation, JSON file + ledger writer
-│  ├─ data/                          # written run JSON files + ledger.jsonl (gitignored)
-│  ├─ test/
-│  ├─ package.json
-│  └─ tsconfig.json
-└─ frontend/
-   ├─ src/
-   │  ├─ main.tsx, App.tsx
-   │  ├─ api/                        # typed fetch client, auth token handling
-   │  ├─ pages/  (Login, NewRun, RunResult, History)
-   │  ├─ components/                 # SpeechCard, VerdictCard, EconomyPanel, ModeToggle, ...
-   │  └─ styles/
-   ├─ index.html
-   ├─ tailwind.config.js
-   ├─ package.json
-   └─ vite.config.ts
+Tribunal/                        # Nx workspace root
+├─ INTENT.txt                    # original brief (do not edit)
+├─ SPEC.md                       # this file
+├─ personalities.json            # owner-provided persona definitions (§8) — REQUIRED to build/run
+├─ charge-sheet.seed.txt         # canonical Case T-001 text; seeded into the DB on first boot (§4.2b)
+├─ .env.example                  # documents every env var (§9)
+├─ nx.json                       # Nx config: target defaults, caching, named inputs (§3.2)
+├─ package.json                  # ONE root package.json for the whole workspace
+├─ tsconfig.base.json            # path aliases, incl. @tribunal/shared-types → libs/shared-types
+├─ apps/
+│  ├─ api/                       # NestJS backend  (nx g @nx/nest:app apps/api)
+│  │  ├─ src/
+│  │  │  ├─ main.ts              # bootstraps Nest + Swagger (§15.1)
+│  │  │  ├─ app/app.module.ts
+│  │  │  ├─ config/              # env loading + validation (@nestjs/config + zod/joi)
+│  │  │  ├─ auth/                # login, JWT strategy, guard, seed user
+│  │  │  ├─ users/               # User entity + seed
+│  │  │  ├─ personas/            # loads & validates personalities.json at boot
+│  │  │  ├─ chargesheets/        # ChargeSheet entity, seed, CRUD
+│  │  │  ├─ openrouter/          # HTTP client, model list cache, chat wrapper, retry/backoff
+│  │  │  ├─ tribunal/            # orchestration: advocates → judges → verdicts (no combined verdict)
+│  │  │  ├─ runs/                # Run/Speech/Verdict entities, run controller
+│  │  │  └─ economy/             # cost aggregation, JSON file + ledger writer
+│  │  ├─ data/                   # written run JSON files + ledger.jsonl (gitignored)
+│  │  ├─ project.json            # Nx targets: build/serve/test/lint (Jest via @nx/jest)
+│  │  └─ tsconfig.*.json
+│  ├─ api-e2e/                   # backend e2e (Supertest) — nx g @nx/nest:app or jest e2e project
+│  └─ web/                       # React frontend  (nx g @nx/react:app apps/web --bundler=vite)
+│     ├─ src/
+│     │  ├─ main.tsx, app/App.tsx
+│     │  ├─ api/                 # typed fetch client (uses @tribunal/shared-types), auth token
+│     │  ├─ pages/               # Login, NewRun, RunResult, History
+│     │  ├─ components/          # SpeechCard, VerdictCard, EconomyPanel, ModeToggle, VerdictTally…
+│     │  └─ styles/
+│     ├─ index.html
+│     ├─ src/styles.css           # Tailwind v4 CSS-first: @import 'tailwindcss' + @theme tokens
+│     ├─ vite.config.ts          # Vitest configured here too
+│     └─ project.json            # Nx targets: build/serve/test (Vitest via @nx/vite)/lint
+├─ apps/web-e2e/                 # Playwright e2e (optional) — @nx/playwright
+└─ libs/
+   └─ shared-types/              # framework-free DTOs/enums shared by api + web
+      ├─ src/index.ts            # public barrel; import path @tribunal/shared-types
+      └─ project.json            # buildable lib (@nx/js)
 ```
+
+> Domain modules stay inside `apps/api/src` for a project this size. If they grow, extract them to
+> `libs/api/<domain>` later — an Nx move, not a redesign. Only truly shared, framework-free contract
+> types belong in `libs/shared-types`.
+
+### 3.2 Nx workspace conventions
+- **Create:** `npx create-nx-workspace@latest tribunal --preset=apps` (integrated monorepo), then
+  `nx add @nx/nest @nx/react @nx/js`. Generate: `nx g @nx/nest:app apps/api`,
+  `nx g @nx/react:app apps/web --bundler=vite`, `nx g @nx/js:lib libs/shared-types --bundler=tsc`.
+- **One root `package.json`** for the whole workspace (single dependency tree, single lockfile).
+- **Task running:** `nx serve api`, `nx serve web`, `nx build <app>`, `nx test <project>`,
+  `nx lint <project>`, `nx run-many -t test`, and **`nx affected -t build test lint`** in CI so only
+  projects touched by a change (and their dependents) run. Nx computes the project graph from imports.
+- **Caching:** `nx.json` sets `targetDefaults` with `cache: true` for build/test/lint and
+  `dependsOn: ["^build"]` so a project builds its lib deps first. Named `inputs` exclude test files
+  from build hashing. Local cache by default; remote cache (Nx Cloud) optional and out of v1 scope.
+- **Module boundaries:** tag each project in `project.json` (`scope:api` | `scope:web` |
+  `scope:shared`, and `type:app` | `type:lib`) and enable the `@nx/enforce-module-boundaries` lint
+  rule so, e.g., `web` cannot import server code and everything may import `scope:shared`. This is
+  what keeps the OpenRouter key and TypeORM entities from ever leaking into the browser bundle.
+- **Path alias:** `@tribunal/shared-types` (declared in `tsconfig.base.json`) is how both apps import
+  the shared contract. Optionally the `openapi.json` from Swagger (§15.1) generates these types into
+  the lib to guarantee they match the running API.
 
 ---
 
@@ -181,8 +231,7 @@ This is the canonical case extracted from the owner's dossier.
 | status | enum(`pending`,`running`,`completed`,`failed`,`aborted_over_budget`) | |
 | modelSingle | varchar null | Mode A: the one model id used |
 | costCeilingUsd | numeric(12,6) | copied from config at run start (default 5.000000) |
-| finalDecision | enum(`justified`,`not_justified`) null | majority result; null until completed |
-| finalVoteBreakdown | jsonb null | e.g. `{ "justified": 2, "not_justified": 1 }` |
+| verdictTally | jsonb null | **non-binding** count of the 3 verdicts for display only, e.g. `{ "justified": 2, "not_justified": 1 }`. NOT a combined verdict — the system issues none (INTENT §14–15 + dossier scope note). Null until completed. |
 | totalPromptTokens | integer | |
 | totalCompletionTokens | integer | |
 | totalTokens | integer | |
@@ -217,7 +266,7 @@ This is the canonical case extracted from the owner's dossier.
 | systemPrompt | text | exact prompt sent |
 | decision | enum(`justified`,`not_justified`) | parsed from model output |
 | confidence | integer | 0–100, parsed |
-| reasoning | text | the "protocol" for this judge |
+| reasoning | text | the judge's **short opinion** (parsed from `OPINION:`, §5.6); full text in `rawResponse` |
 | rawResponse | text | full model text (fallback if parsing partial) |
 | speechOrderShown | jsonb | order of speeches this judge saw (audit) |
 | promptTokens / completionTokens / totalTokens | integer | |
@@ -252,7 +301,12 @@ OpenRouter, OpenAI-compatible Chat Completions API.
 4. **Mode A:** use `MODE_A_MODEL` env if set and still free/available; else pick candidate #1.
 5. **Mode B:** assign the first 7 distinct candidates to the 7 personas in a fixed persona order.
    If fewer than 7 free models are available, round-robin (reuse) to fill 7, and record the actual
-   assignment on each `Speech`/`Verdict`. Persist the assignment so a run is reproducible.
+   assignment on each `Speech`/`Verdict`. Persist the assignment so a run is reproducible. In
+   practice the number of **distinct** models is bounded by how many free endpoints the account can
+   actually call: OpenRouter gates many `:free` models to approved apps and returns **403**, so those
+   are swapped out (§5.4) and Mode B can collapse to the few callable models — expected behavior, not
+   a failure. Sending both `X-Title` and `HTTP-Referer` (set `OPENROUTER_APP_URL`) unlocks more of
+   them.
 6. Cache the free list to avoid hammering `/models`; refresh on cache miss or on a 404 data-policy
    error (§5.3).
 
@@ -281,6 +335,12 @@ callModel({ model, systemPrompt, userPrompt, temperature, maxTokens }) → {
 - **Retry/backoff:** on HTTP 429 (rate limit) retry with exponential backoff (e.g. 1s, 2s, 4s; max
   4 attempts, jitter). On HTTP 402 (out of credits) abort the whole run with a clear message. On
   the §5.3 404, abort with the actionable message.
+- **Model-specific rejection → swap, don't fail the run:** an HTTP **403** (model gated/restricted)
+  or a **provider-side HTTP 400** ("Provider returned error" / `INVALID_ARGUMENT` — e.g. a Google AI
+  Studio free model that rejects the request) is mapped to `ModelUnavailableError` for *that model
+  only*: the pipeline marks it unavailable and swaps to another free model (§5.2) instead of aborting.
+  A 400 that is **not** a provider error (an OpenRouter-level validation failure of our own request)
+  still surfaces as a hard error so a real bug is not masked.
 - **Timeout:** per-call timeout (e.g. 90s), configurable.
 
 ### 5.5 Run pipeline (`tribunal` module)
@@ -290,31 +350,40 @@ callModel({ model, systemPrompt, userPrompt, temperature, maxTokens }) → {
    snapshot, never re-read the entity (so a mid-flight edit cannot change this run).
 2. Resolve models for the chosen mode (§5.2).
 3. **Advocate phase** — build each advocate's prompt = `{ system: persona.systemPrompt, user:
-   chargeSheetSnapshot }`. Run the 4 calls in parallel. Persist a `Speech` per call. After each call, add
+   chargeSheetSnapshot }`. The advocate prompt constrains output to the in-character speech only — no preamble, meta-commentary, headings, or stage directions — and a conservative sanitizer strips a leading filler line if one slips through. Run the 4 calls in parallel. Persist a `Speech` per call. After each call, add
    its `costUsd` to the running total; if total > `costCeilingUsd`, stop, set status
    `aborted_over_budget`, persist what exists, still write economy, and return. (With free models
    this never triggers; the guard exists for safety and future paid models.)
 4. **Judge phase** — for each judge, compute a **counterbalanced speech order** (rotate the 4
    speeches by judge index; record it). Build prompt = `{ system: judge.systemPrompt, user:
    chargeSheetSnapshot + rendered speeches in that order + a strict output-format instruction }`. Run the 3
-   calls in parallel. Parse each into `{ decision, confidence, reasoning }` (§5.6). Persist a
+   calls in parallel. Parse each into a short `{ decision, confidence, reasoning }` — `reasoning` holds the judge's brief opinion, not a long protocol (§5.6). Persist a
    `Verdict` per judge. Apply the budget guard as in step 3.
-5. **Aggregate** — `finalDecision` = majority of the 3 `decision` values; store
-   `finalVoteBreakdown`. Sum tokens and cost across all 7 calls into the `Run`.
+5. **Finalize** — do **not** compute an authoritative combined verdict (INTENT outputs the 3
+   verdicts as-is). Optionally compute `verdictTally` = counts of the 3 `decision` values for
+   non-binding display. Sum tokens and cost across all 7 calls into the `Run`.
 6. Write the economy JSON file + append to the ledger (§6). Set status `completed`, `completedAt`.
 
+**Execution is asynchronous (see §10.1):** `POST /runs` creates the `Run` (status `running`) and returns `{ runId }` immediately, then runs the phases in the background. If any step throws (including the §5.3 data-policy 404 or the §5.4 402), the run is persisted with status `failed` and an `error` message rather than surfacing as an HTTP error on the POST — the frontend reads it while polling. Speeches and verdicts are persisted as each call resolves, so `GET /runs/:id/progress` reports which personas have finished.
+
 ### 5.6 Verdict output parsing (robust)
-Instruct each judge to end its answer with a strict machine-readable block, while still giving free
-reasoning above it. Prompt suffix (exact intent, wording may be tuned):
+Each judge is instructed to answer with **only** a short, strict, machine-readable block — a brief
+opinion instead of a long protocol, so the output stays on-signal. Prompt suffix (exact intent,
+wording may be tuned; include a concrete example to maximize compliance):
 
-> "First give your reasoning as the trial protocol. Then, on the final lines, output EXACTLY:
-> `DECISION: justified` or `DECISION: not_justified`, then `CONFIDENCE: <integer 0-100>`."
+> "Do NOT write a long protocol. Output ONLY these three lines and nothing else:
+> `OPINION: <your verdict in 1-3 plain sentences>`
+> `CONFIDENCE: <integer 0-100>`
+> `DECISION: justified` — or — `DECISION: not_justified`"
 
-Parser: case-insensitive regex for `DECISION:` and `CONFIDENCE:`. If parsing fails, do a single
-one-shot re-ask ("Reply with only the two lines…") using the same model; if it still fails, store
-`rawResponse`, mark the verdict `decision` via a conservative fallback (`justified` =
-benefit of the doubt to the accused) with `confidence: 0`, and flag the run in `error`. Always keep
-`rawResponse`.
+Parser: case-insensitive regex for `OPINION:`, `CONFIDENCE:`, and `DECISION:`. The `CONFIDENCE`
+match is tolerant (accepts a trailing `%`, a "confidence level:" lead-in, and surrounding words) to
+fix the observed inconsistency where the number was dropped or reformatted; it is clamped to 0-100.
+`reasoning` is set to the parsed `OPINION` (falling back to the block-stripped text if `OPINION` is
+absent but `DECISION` parsed). If `DECISION` or `CONFIDENCE` is missing, do a single one-shot re-ask
+("Reply with ONLY the three lines…") using the same model; if it still fails, store `rawResponse`,
+mark the verdict `decision` via a conservative fallback (`justified` = benefit of the doubt to the
+accused) with `confidence: 0`, and flag the run in `error`. Always keep `rawResponse`.
 
 ---
 
@@ -322,15 +391,14 @@ benefit of the doubt to the accused) with `confidence: 0`, and flag the run in `
 
 Per `INTENT.txt` and D8, every completed (or aborted) run produces:
 
-**(a) Per-run JSON file** — `backend/data/runs/<runId>.json`:
+**(a) Per-run JSON file** — `apps/api/data/runs/<runId>.json`:
 ```json
 {
   "runId": "…", "createdAt": "…", "mode": "A_single | B_per_persona",
   "chargeSheetChars": 1234,
-  "finalDecision": "justified | not_justified",
-  "finalVoteBreakdown": { "justified": 2, "not_justified": 1 },
+  "verdictTally": { "justified": 2, "not_justified": 1 },
   "perPersona": [
-    { "personaKey": "support_1", "role": "advocate", "side": "support",
+    { "personaKey": "support_1", "personaName": "Jon Snow", "role": "advocate", "side": "support",
       "model": "…", "promptTokens": 0, "completionTokens": 0, "totalTokens": 0,
       "reasoningTokens": 0, "costUsd": 0.0 }
     // … all 7 personas
@@ -341,8 +409,8 @@ Per `INTENT.txt` and D8, every completed (or aborted) run produces:
 }
 ```
 
-**(b) Cumulative ledger** — `backend/data/ledger.jsonl`: one compact JSON line appended per run
-`{ runId, createdAt, mode, totalTokens, costUsd, finalDecision }`. Append-only; also reconstructable
+**(b) Cumulative ledger** — `apps/api/data/ledger.jsonl`: one compact JSON line appended per run
+`{ runId, createdAt, mode, totalTokens, costUsd, verdictTally }`. Append-only; also reconstructable
 from the DB if the file is lost.
 
 **(c) UI display** — the RunResult page shows an **Economy panel** for that run (per-persona table,
@@ -447,8 +515,8 @@ All via `@nestjs/config` with schema validation; document in `.env.example`.
 | `JWT_EXPIRES_IN` | no | `1d` | |
 | `SEED_USERNAME` | yes | — | |
 | `SEED_PASSWORD` | yes | — | seeded once at boot |
-| `PERSONAS_FILE` | no | `../personalities.json` | persona source |
-| `CHARGE_SHEET_SEED_FILE` | no | `../charge-sheet.seed.txt` | seed text for Case T-001 (§4.2b) |
+| `PERSONAS_FILE` | no | `personalities.json` | persona source, resolved from the Nx workspace root (`nx serve` runs from root) |
+| `CHARGE_SHEET_SEED_FILE` | no | `charge-sheet.seed.txt` | seed text for Case T-001 (§4.2b), resolved from workspace root |
 | `CORS_ORIGINS` | yes | — | comma-separated frontend origins |
 | `PORT` | no | `3000` | backend port |
 
@@ -463,42 +531,58 @@ All JSON. All except `/auth/login` require `Authorization: Bearer <jwt>`.
 | POST | `/auth/login` | `{ username, password }` | `{ accessToken }` |
 | GET | `/auth/me` | — | `{ id, username }` |
 | GET | `/models/free` | — | `[{ id, contextLength }]` (cached live free list) |
+| GET | `/personas` | — | roster for display/animation: `[{ key, name, role, side? }]` — no `systemPrompt` |
 | GET | `/charge-sheet` | — | the active charge sheet `{ id, title, content, updatedAt }` |
 | GET | `/charge-sheets` | — | list of all charge sheets (id, title, isActive, updatedAt) |
 | PATCH | `/charge-sheet/:id` | `{ title?, content?, isActive? }` | updates a charge sheet (editable per D9); setting `isActive:true` deactivates the others. **Built and protected, but not surfaced in the v1 UI.** |
-| POST | `/runs` | `{ mode, modelSingle?, chargeSheetId? }` | `{ runId }` — starts a run using `chargeSheetId` or the active charge sheet (see §10.1). No charge-sheet text in the body. |
-| GET | `/runs` | `?limit&offset` | list of run summaries (id, createdAt, mode, finalDecision, totalCostUsd, status) |
-| GET | `/runs/:id` | — | full run: charge, 4 speeches, 3 verdicts, final decision, economy |
+| POST | `/runs` | `{ mode, modelSingle?, chargeSheetId? }` | `{ runId }` — **creates** the run (status `running`) and returns immediately; the pipeline runs in the background (see §10.1). Uses `chargeSheetId` or the active charge sheet. No charge-sheet text in the body. |
+| GET | `/runs` | `?limit&offset` | list of run summaries (id, createdAt, mode, verdictTally, totalCostUsd, status) |
+| GET | `/runs/:id` | — | full run: charge, 4 speeches, 3 verdicts (each with its short opinion), economy, optional non-binding `verdictTally`. Speeches/verdicts include the resolved persona `name`. |
+| GET | `/runs/:id/progress` | — | lightweight progress: `{ status, phase, completedPersonaKeys[], error }` — polled to drive the live animation (§11) |
 | GET | `/runs/:id/economy` | — | the per-run economy JSON (file (a)); `Content-Disposition: attachment` |
 | GET | `/economy/ledger` | — | the cumulative ledger (from DB and/or `ledger.jsonl`) |
 
-### 10.1 Run execution model (v1)
-`POST /runs` executes the pipeline **synchronously** server-side and returns the completed run
-(a run is ~7 sequential-ish calls; expect tens of seconds). The frontend shows a loading/progress
-state. **Extension (not v1):** switch to async (`202` + `GET /runs/:id` polling or SSE) if runs get
-slow or rounds are added. Build the service layer so the controller could return early without a
-rewrite (i.e. orchestration is a service method, not inline in the controller).
+### 10.1 Run execution model
+`POST /runs` **creates** the run (status `running`) and returns `{ runId }` immediately; the ~7-call
+pipeline runs in the background (orchestration stays a service method, not inline in the controller).
+The frontend navigates straight to the live Run Result view and **polls `GET /runs/:id/progress`**
+(~1.5s) to drive the per-persona animation (§11), then loads the full run via `GET /runs/:id` once the
+status is terminal (`completed`, `failed`, or `aborted_over_budget`). A background failure is recorded
+on the run (`status: failed`, `error`) rather than returned from the POST. (Earlier revisions ran this
+synchronously; the async model here is the extension the original §10.1 anticipated.)
 
 ---
 
-## 11. Frontend (React + Tailwind, Vite)
+## 11. Frontend (`apps/web` — React + Tailwind, Vite)
 
 Pages:
 - **Login** — username/password → stores JWT.
 - **New Run** — displays the **stored active charge sheet read-only** (from `GET /charge-sheet`; no
   edit/upload control in v1, per D9), a **Mode A/B toggle** with a one-line explanation of each, and
   (Mode A) an optional model picker fed by `GET /models/free`. "Run tribunal" button → `POST /runs`
-  (body carries only `mode` and optional `modelSingle`) → navigates to result on completion.
-- **Run Result** — three regions:
-  1. **Advocates** — 4 SpeechCards grouped Support (defense) vs Against (prosecution).
-  2. **Judges** — 3 VerdictCards, each showing decision badge (justified/not_justified), confidence,
-     and the reasoning/protocol; plus a prominent **Final Verdict** banner (majority + vote breakdown).
-  3. **Economy panel** — per-persona + per-model + totals table (tokens & USD), "$0.00 (free)" shown
-     honestly, and **Download JSON** / view-ledger actions.
+  (body carries only `mode` and optional `modelSingle`) → navigates immediately to the live Run Result view.
+- **Run Result** — a **two-tab view** driven by a small segmented tab bar (UX rule 4: self-evident,
+  no instructions). The default tab is **Verdict**; the other is **Economy**.
+  - **Verdict tab** — **Judges first** (they deliver the verdict; UX rule 2: structure mirrors the
+    domain). The 3 VerdictCards, each titled with the judge's **name**, show a decision badge
+    (justified/not_justified), confidence, and the judge's **short opinion** (§5.6). The persona **name** sits on its own header
+    line so it stays legible even in the narrow judges column — never crowded out by the badge or
+    confidence. Below them, the
+    **Advocates**: 4 SpeechCards grouped Support (defense) vs Against (prosecution), each titled with
+    the persona's **name** (e.g. "Jon Snow"). Every card renders at a **fixed collapsed size** and
+    **expands/collapses on click** (a rotating caret; UX rule 1: compact by default, UX rule 3:
+    immediate feedback). The three verdicts are the output — there is **no combined "final verdict"**.
+    A non-binding tally may appear only as a **bare count** (e.g. "Justified 2 · Not justified 1") —
+    **no disclaimer copy** (UX rule 1: trim explanatory/AI statements; the "no combined verdict"
+    behavior stands regardless of copy).
+  - **Economy tab** — a per-persona (by **name**) + per-model + totals table (tokens & USD), "$0.00 (free)" shown
+    honestly, and **Download JSON** / view-ledger actions.
 - **History** — table of past runs (from `GET /runs`); row click → Run Result.
 
 UX notes: disable the Run button while a run is in flight; surface the §5.3 data-policy error
 verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
+
+**Live run animation:** while a run's status is `running`, the Run Result page shows the roster (4 advocates + 3 judges from `GET /personas`) arranged in a circle, each with a spinning sync icon that turns to a check as that persona's speech/verdict is persisted (polled via `GET /runs/:id/progress`). Judges appear pending until the advocate phase finishes; on terminal status the page swaps to the results view.
 
 ---
 
@@ -524,10 +608,120 @@ verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
 
 ---
 
-## 14. Build order (phased, each phase independently runnable)
+## 14. Testing
 
-1. **Scaffold** — repo layout, `docker-compose` Postgres, NestJS app, Vite React app, Tailwind,
-   `.env.example`, config validation.
+### 14.1 Tooling & conventions
+- **Backend:** Jest (NestJS default) for unit + integration; **Supertest** for HTTP e2e; **nock**
+  (or `msw/node`) to stub every OpenRouter HTTP call; **Testcontainers-postgres** (ephemeral real
+  Postgres) for repository/e2e tests. Pure-logic units use no DB. Fixtures for `/models` and chat
+  responses live in `apps/api/test/fixtures/`.
+- **Frontend:** **Vitest** (via `@nx/vite`) + **React Testing Library** (jsdom); **MSW** to mock the
+  backend; **Playwright** (via `@nx/playwright`, in `apps/web-e2e`, optional) for one happy-path e2e.
+- **Runner:** tests run through **Nx targets** — `nx test api`, `nx test web`, `nx test shared-types`
+  — and in CI via **`nx affected -t test lint build`** so only projects touched by a change (and
+  their dependents) run. Backend unit + integration use Jest (`@nx/jest`).
+- **Hard rule — determinism:** tests NEVER call the real OpenRouter or any network. Everything is
+  stubbed. Never assert on model *prose/quality* (non-deterministic) — assert on parsing, routing,
+  aggregation, persistence, and structure.
+- **Coverage gate:** ≥ 80% lines/branches on the core logic modules (`tribunal/`, `openrouter/`,
+  `economy/`, `chargesheets/`, `personas/`, `auth/`) plus `libs/shared-types`. Config as a build
+  decision, adjustable.
+
+### 14.2 Backend unit tests (pure logic — highest value, DB-free)
+
+| Component | Cases to cover |
+|-----------|----------------|
+| **Verdict parser** (§5.6) | parses `justified`/`not_justified` + confidence from multiline text with reasoning above; case-insensitive; trailing punctuation/whitespace tolerated; confidence clamped to 0–100; missing `DECISION:` or `CONFIDENCE:` → `needsReask`; conflicting duplicate `DECISION:` lines → documented rule (take last); total failure after re-ask → fallback `{justified, 0}` + flag |
+| **Verdict tally** (§5.5, non-binding) | counts the 3 `decision` values correctly (3–0, 2–1, 0–3); confidence never changes the counts; guard requires exactly 3 verdicts; asserts **no** authoritative combined `finalDecision` field is produced (INTENT conformance) |
+| **Free-model filter & assignment** (§5.2) | keeps only `prompt=="0" && completion=="0"`; excludes free-prompt/paid-completion; sorts by `context_length` desc; Mode A picks #1, honors `MODE_A_MODEL` only when still free; Mode B assigns 7 distinct, round-robins deterministically when < 7 exist, records assignment; empty free list → throws the actionable no-free-models error |
+| **Counterbalanced speech order** (§5.5) | judge *i* gets rotation *i*; the 3 judges get 3 distinct orders; recorded order == rendered order; deterministic (no RNG) |
+| **Economy builder** (§6) | sums `usage.cost` (free → `0.00`); per-persona rows for all 7; per-model rollup groups by model id with call counts; token totals correct; JSON shape matches §6 (snapshot test); ledger line shape `{runId,createdAt,mode,totalTokens,costUsd,verdictTally}` |
+| **Budget guard** (§5.5) | cumulative cost > ceiling → status `aborted_over_budget`, remaining calls skipped; ceiling read from the run *snapshot* not live config; partial rows + economy still persisted |
+| **Personas loader** (§8) | valid file loads 4+3; rejects ≠4 advocates / ≠3 judges; rejects side counts ≠ (2 support, 2 against); rejects duplicate keys; rejects empty `systemPrompt`; fail-fast with a clear message |
+| **Prompt builders** (§5.5, §13) | advocate prompt = `{system: persona, user: chargeSheetSnapshot}` with NO other speeches leaked; judge prompt includes snapshot + all 4 speeches + the `DECISION`/`CONFIDENCE` block; charge sheet embedded as clearly-delimited "case text" (framing string present — prompt-injection surface) |
+| **Charge sheet invariant** (§4.2) | setting `isActive` on one deactivates all others (exactly one active); run snapshots active content at creation; editing the sheet afterward leaves that run's snapshot unchanged |
+| **OpenRouter client** (§5.4, nock) | captures `usage.cost`, prompt/completion tokens, `reasoning_tokens` when present; 429 → backoff-retries then succeeds; exceeds max tries → throws; 402 → no retry, credits error; 404 data-policy body → typed `DataPolicyError` with actionable message; per-call timeout aborts |
+| **Auth** | argon2id hash/verify round-trip; JWT sign/verify; expired token rejected; seed is idempotent (no duplicate user on second boot) |
+
+### 14.3 Backend integration / e2e (Supertest + Testcontainers-postgres + nock)
+- `POST /auth/login`: valid → token; invalid → 401. Guard: `/runs` without token → 401, with token → 200.
+- **Full run happy path** (OpenRouter stubbed): `POST /runs {mode:A_single}` → `GET /runs/:id`
+  returns 4 speeches + 3 verdicts (each with its protocol) + economy (+ optional `verdictTally`); the
+  per-run JSON file exists on disk;
+  the ledger has a new line.
+- **Mode B:** the 7 persisted rows record distinct model ids.
+- **Charge sheet:** `GET /charge-sheet` returns the active one; `PATCH /charge-sheet/:id` content is
+  reflected in the *next* run's snapshot; `PATCH … {isActive:true}` flips the active flag and clears
+  the previous active.
+- **Failure surfaces:** OpenRouter 404 data-policy → API returns the actionable message (not 500);
+  OpenRouter 402 → run `failed` with credits message; ceiling `0.0001` → run `aborted_over_budget`
+  with partial rows persisted.
+
+### 14.4 Frontend component tests (Vitest + RTL + MSW)
+
+| Component | Cases |
+|-----------|-------|
+| **VerdictCard** | correct badge label/color for `justified` vs `not_justified`; confidence shown; reasoning rendered |
+| **Verdict list + tally** | the 3 VerdictCards all render; the non-binding tally shows correct counts and its "no combined verdict" label; assert there is no single "final verdict" element |
+| **EconomyPanel** | per-persona table + per-model rollup + totals render; `$0.00 (free)` shown when cost is 0; Download JSON triggers the correct request/blob |
+| **ModeToggle** | Mode A shows the model picker, Mode B hides it; submit payload carries the chosen mode (+ `modelSingle` only in A) |
+| **NewRun page** | charge sheet shown **read-only**; assert NO textarea/upload/edit control exists (guards D9); Run button disabled while the request is in flight |
+| **SpeechCard grouping** | support vs against grouped into the right columns |
+| **Login flow** | success stores token; a protected route with no token redirects to Login |
+| **API client** | attaches `Bearer` token; on 401 clears token + redirects; surfaces the data-policy error into a visible banner |
+| **History** | renders rows from `GET /runs`; row click navigates to the result |
+
+### 14.5 Frontend e2e (optional, Playwright, backend mocked/seeded)
+- login → run (Mode A) → see 4 speeches, 3 verdicts, the final banner, the economy panel, and a
+  working Download JSON.
+
+---
+
+## 15. Documentation
+
+### 15.1 API docs — Swagger / OpenAPI (`@nestjs/swagger`)
+- Add `@nestjs/swagger`. In `main.ts`, build a `DocumentBuilder` (title "Tribunal API", version,
+  description), call `.addBearerAuth()`, and mount `SwaggerModule.setup('api/docs', …)`. Served in
+  dev always; in prod gate behind an env flag (or the JWT).
+- Decorate **every DTO** with `@ApiProperty` (types, examples, and the enums: run `mode` =
+  `A_single|B_per_persona`, `decision` = `justified|not_justified`, run `status`). Decorate
+  controllers with `@ApiTags`, endpoints with `@ApiOperation` + `@ApiResponse` for
+  200/201/400/401/402/404, and `@ApiBearerAuth()` on protected routes.
+- **Document the special errors** so they show in the schema: 401 (auth), 402 (out of credits), and
+  the 404 free-model **data-policy** error — include its actionable "enable the privacy toggles"
+  message as the example body.
+- Emit `openapi.json` as a build artifact (from the generated `document`); optionally generate the
+  typed frontend API client from it (keeps the front/back contract in sync).
+- **Acceptance:** `/api/docs` renders and every endpoint in §10 appears with request/response schemas
+  and the bearer scheme; `openapi.json` is emitted.
+
+### 15.2 READMEs & operational docs
+- **Root README:** what Tribunal is, the architecture diagram (§3), how to run it against a local
+  Postgres, the two
+  modes, and the token-economy output.
+- **Root README:** also documents the **Nx workspace** — install, the project layout (`apps/`,
+  `libs/`), the common `nx serve/build/test/lint/affected` commands, and the shared-types lib.
+- **`apps/api` README:** the env table (§9), DB + migrations, seeding (user **and** charge sheet),
+  the **OpenRouter privacy-toggle requirement (§5.3) called out prominently**, how to run its Nx
+  targets, and where run JSON files / the ledger land.
+- **`apps/web` README:** env (API base URL), `nx serve web`, build, test.
+- `.env.example` documents every var in §9.
+- Top-of-module docblocks for `tribunal/`, `openrouter/`, `economy/` explaining the pipeline and the
+  "protocol" concept (each judge's reasoning).
+
+### 15.3 Code documentation
+- TSDoc on the public service methods (`runTribunal`, `resolveModels`, `parseVerdict`,
+  `buildEconomy`, charge-sheet activation). DTOs are the single source of API truth — Swagger derives
+  from them, so keep them accurate rather than hand-writing schemas.
+
+---
+
+## 16. Build order (phased, each phase independently runnable)
+
+1. **Scaffold (Nx)** — `create-nx-workspace` (integrated), `nx add @nx/nest @nx/react @nx/js`,
+   generate `apps/api` (Nest), `apps/web` (React+Vite), `libs/shared-types` (§3.2); wire
+   `@tribunal/shared-types` path alias, tags + `@nx/enforce-module-boundaries`, `nx.json` caching;
+   a locally-running Postgres (no Docker), Tailwind in `apps/web`, `.env.example`, config validation.
 2. **Auth** — User entity, seed user, `/auth/login`, JWT guard, `/auth/me`; Login page.
 3. **OpenRouter module** — chat wrapper (usage+cost capture, retry/backoff), `GET /models` free
    filter + cache, `/models/free` endpoint. Smoke-test one free call end to end.
@@ -540,20 +734,24 @@ verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
 7. **Economy** — per-run JSON writer, ledger append, `/runs/:id/economy`, `/economy/ledger`.
 8. **Runs API** — `POST /runs`, `GET /runs`, `GET /runs/:id`.
 9. **Frontend** — New Run, Run Result (speeches + verdicts + final banner + economy panel), History.
-10. **Hardening** — error surfaces (§12), input caps, tests (unit: verdict parser, majority vote,
-   free-model filter, cost aggregation; e2e: login → run → result with OpenRouter mocked).
-11. **Docs** — README with setup, env, "enable OpenRouter free-endpoint privacy toggles" note, and
-    a reminder to drop in the real `personalities.json`.
+10. **Hardening + tests** — error surfaces (§12), input caps, and the full test suite per **§14**
+    (backend unit + integration/e2e, frontend component tests, coverage gate). OpenRouter is always
+    mocked. Swagger decorators (`@ApiProperty`/`@ApiOperation`/…) are added *alongside* each endpoint
+    in earlier phases, not deferred — this phase just verifies completeness.
+11. **Docs** — finalize **§15**: mount Swagger at `/api/docs` + emit `openapi.json`; write the root /
+    backend / frontend READMEs (incl. the "enable OpenRouter free-endpoint privacy toggles" note and
+    the reminder to drop in the real `personalities.json`).
 
-## 15. Acceptance criteria (definition of done for v1)
+## 17. Acceptance criteria (definition of done for v1)
 
 - A seeded user can log in; unauthenticated API calls are rejected.
 - The canonical charge sheet (Case T-001) is seeded into the DB on first boot and loaded by the
   program; the New Run page shows it read-only (no upload/edit control in v1). Editing it via
   `PATCH /charge-sheet/:id` works and affects only future runs.
-- Given the stored charge sheet and a chosen mode, a run produces 4 speeches, 3 verdicts
-  (each with decision + confidence + reasoning), a correct majority final decision, and stores an
-  immutable `chargeSheetSnapshot` on the run.
+- Given the stored charge sheet and a chosen mode, a run produces 4 speeches and **3 independent
+  verdicts** (each with decision + confidence + reasoning/protocol) plus the code budget — matching
+  INTENT's output clause. The system produces **no** authoritative combined/majority verdict; any
+  vote tally shown is explicitly non-binding. Each run stores an immutable `chargeSheetSnapshot`.
 - Mode A uses one model; Mode B assigns distinct free models per persona (recorded per call).
 - Every call's real token usage and `usage.cost` are captured; a per-run JSON file and a ledger
   entry are written; the same economy is shown in the UI with a working JSON download.
@@ -561,10 +759,14 @@ verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
 - The $5 (configurable) ceiling is enforced (verifiable by setting it very low and confirming
   `aborted_over_budget`).
 - Personas load from `personalities.json` and the app refuses to start if it is missing/invalid.
+- **Swagger UI at `/api/docs`** documents every §10 endpoint (request/response schemas, enums, the
+  bearer scheme, and the 401/402/404 error bodies); `openapi.json` is emitted.
+- **Test suites pass** in CI with OpenRouter fully mocked: backend unit + integration/e2e (§14.2–3)
+  and frontend component tests (§14.4), meeting the coverage gate on core logic modules.
 
 ---
 
-## 16. Research basis (sources)
+## 18. Research basis (sources)
 
 Free-model rate limits (50/day no-credit, 1,000/day after $10 lifetime, 20/min):
 - https://openrouter.ai/docs/api_reference/limits

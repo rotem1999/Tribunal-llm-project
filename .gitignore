@@ -1,0 +1,39 @@
+# --- Tribunal .gitignore ---
+
+# Dependencies & build output
+node_modules/
+dist/
+tmp/
+out-tsc/
+/.nx/cache
+/.nx/workspace-data
+/.nx/polygraph
+/.nx/self-healing
+/.nx/migrate-runs
+coverage/
+test-output/
+vite.config.*.timestamp*
+
+# Env & secrets — never commit real values (keep the example)
+.env
+.env.*
+!.env.example
+
+# IDEs / OS
+/.idea
+.DS_Store
+Thumbs.db
+
+# Generated run output (SPEC §6): ignore the artifacts BY FILE, never the whole
+# apps/api/data/ folder — so apps/api/data/CLAUDE.md stays tracked.
+/apps/api/data/runs/
+/apps/api/data/ledger.jsonl
+
+# Safety net: CLAUDE.md is documentation and must ALWAYS be committed.
+# Keep this LAST so it wins over any rule above. (Note: git cannot re-include a
+# file that sits inside a fully-ignored directory, which is exactly why the run
+# output above is ignored by file rather than by folder.)
+!**/CLAUDE.md
+
+# Generated OpenAPI artifact (SPEC §15.1)
+/apps/api/openapi.json
