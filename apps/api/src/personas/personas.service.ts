@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { PersonaRole, type PersonaInfo } from '@tribunal/shared-types';
 import {
   type Advocate,
   type Judge,
@@ -54,6 +55,32 @@ export class PersonasService implements OnModuleInit {
 
   getJudges(): Judge[] {
     return this.personas.judges;
+  }
+
+  /** Public roster for `GET /personas` + the run animation (SPEC §10, §11). */
+  getRoster(): PersonaInfo[] {
+    return [
+      ...this.personas.advocates.map((a) => ({
+        key: a.key,
+        name: a.name,
+        role: PersonaRole.advocate,
+        side: a.side,
+      })),
+      ...this.personas.judges.map((j) => ({
+        key: j.key,
+        name: j.name,
+        role: PersonaRole.judge,
+        side: null,
+      })),
+    ];
+  }
+
+  /** Display name for a persona key (SPEC §5.6/§11); falls back to the key. */
+  nameFor(key: string): string {
+    const found = [...this.personas.advocates, ...this.personas.judges].find(
+      (p) => p.key === key,
+    );
+    return found?.name ?? key;
   }
 
   /** All persona keys in a fixed order: advocates then judges (SPEC §5.2 Mode B). */
