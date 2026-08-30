@@ -134,3 +134,22 @@ describe('VERDICT_OUTPUT_INSTRUCTION', () => {
     expect(VERDICT_OUTPUT_INSTRUCTION).toMatch(/CONFIDENCE: <integer 0-100>/);
   });
 });
+
+describe('output hardening (SPEC §5.5, §5.6)', () => {
+  it('tells the advocate to output the speech only (no scaffolding)', () => {
+    const { user } = buildAdvocatePrompt(advocate, CHARGE);
+    expect(user).toMatch(/output only your courtroom speech/i);
+    expect(user).toMatch(/no preamble/i);
+  });
+
+  it('the judge verdict block requires a short OPINION line', () => {
+    expect(VERDICT_OUTPUT_INSTRUCTION).toMatch(/OPINION:/);
+    const { user } = buildJudgePrompt(judge, CHARGE, [
+      { side: Side.support, content: 'a' },
+      { side: Side.against, content: 'b' },
+      { side: Side.support, content: 'c' },
+      { side: Side.against, content: 'd' },
+    ]);
+    expect(user).toMatch(/OPINION:/);
+  });
+});
