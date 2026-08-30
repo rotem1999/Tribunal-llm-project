@@ -69,6 +69,11 @@ PostgreSQL runs **locally on the host** (natively installed, not in Docker — o
 `DATABASE_URL` at that instance. Schema changes go through TypeORM migrations, not `synchronize`
 (which is off).
 
+On **PostgreSQL 15+** a freshly created non-owner role can connect but cannot create
+objects in the `public` schema, so grant it explicitly as the database owner —
+`GRANT ALL ON SCHEMA public TO <role>;` — or the boot-time migrations fail with
+`permission denied for schema public`.
+
 Migrations run automatically when the app boots, so a normal `nx serve api` against an empty database
 brings the schema up to date and seeds it. For out-of-Nest tooling — generating a new migration or
 reverting — a standalone `DataSource` lives at `src/data-source.ts` (it reads `DATABASE_URL` from

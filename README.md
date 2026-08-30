@@ -77,6 +77,7 @@ npm install
 createdb tribunal
 psql -d tribunal -c "CREATE ROLE tribunal LOGIN PASSWORD 'tribunal';"
 psql -d tribunal -c "GRANT ALL ON DATABASE tribunal TO tribunal;"
+psql -d tribunal -c "GRANT ALL ON SCHEMA public TO tribunal;"   # PostgreSQL 15+: lets the role create tables
 
 # 3. Configure the environment
 cp .env.example .env
