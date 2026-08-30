@@ -20,6 +20,9 @@ const FREE_MODELS = Array.from({ length: 7 }, (_, i) => ({
 }));
 
 let mode: 'ok' | 'empty' = 'ok';
+// When set, the fake OpenRouter returns a 403 "agentic harness only" for this
+// model id, so the pipeline must skip it and retry on another free model.
+let blockedModel: string | null = null;
 
 function startFakeOpenRouter(): Promise<http.Server> {
   const server = http.createServer((req, res) => {
@@ -33,6 +36,25 @@ function startFakeOpenRouter(): Promise<http.Server> {
             ? [{ id: 'paid', context_length: 1, pricing: { prompt: '0.01', completion: '0.02' } }]
             : FREE_MODELS;
         res.end(JSON.stringify({ data }));
+        return;
+      }
+      const requestedModel = (() => {
+        try {
+          return (JSON.parse(body) as { model?: string }).model ?? '';
+        } catch {
+          return '';
+        }
+      })();
+      if (blockedModel && requestedModel === blockedModel) {
+        res.statusCode = 403;
+        res.end(
+          JSON.stringify({
+            error: {
+              message: `${requestedModel} is only available on agentic harnesses`,
+              code: 403,
+            },
+          }),
+        );
         return;
       }
       const isJudge = body.includes('ADVOCATE ARGUMENTS');
@@ -218,6 +240,41 @@ describe('Tribunal API (e2e)', () => {
         .send({ mode: 'A_single' })
         .expect(404);
       expect(String(res.body.message)).toMatch(/free model|privacy/i);
+    });
+  });
+
+  describe('restricted-model fallback', () => {
+    let app3: INestApplication;
+    let token3: string;
+
+    beforeAll(async () => {
+      blockedModel = 'free-1:free'; // the top free model Mode A auto-picks
+      app3 = await bootstrap();
+      token3 = (await login(app3, 'admin', 'pw')).body.accessToken;
+    });
+
+    afterAll(async () => {
+      await app3?.close();
+      blockedModel = null;
+    });
+
+    it('skips a 403 "agentic harness only" model and completes on another free model', async () => {
+      const created = await request(app3.getHttpServer())
+        .post('/api/runs')
+        .set({ Authorization: `Bearer ${token3}` })
+        .send({ mode: 'A_single' })
+        .expect(201);
+      const res = await request(app3.getHttpServer())
+        .get(`/api/runs/${created.body.runId}`)
+        .set({ Authorization: `Bearer ${token3}` })
+        .expect(200);
+      expect(res.body.status).toBe('completed');
+      expect(res.body.speeches).toHaveLength(4);
+      expect(res.body.verdicts).toHaveLength(3);
+      const models = [...res.body.speeches, ...res.body.verdicts].map(
+        (x: { model: string }) => x.model,
+      );
+      expect(models).not.toContain('free-1:free');
     });
   });
 });

@@ -3,6 +3,7 @@ import type { ConfigService } from '@nestjs/config';
 import { OpenRouterClient } from './openrouter.client';
 import {
   DataPolicyError,
+  ModelUnavailableError,
   OpenRouterError,
   OutOfCreditsError,
   RateLimitError,
@@ -186,6 +187,30 @@ describe('OpenRouterClient.callModel — retry + error mapping', () => {
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(client.backoffCalls).toEqual([]);
+  });
+
+  it('maps 403 to ModelUnavailableError (carrying the requested model) WITHOUT retrying', async () => {
+    const fetchMock = setFetch(async () =>
+      errResponse(403, 'This model is only available on agentic harnesses.'),
+    );
+    const client = new TestClient(makeConfig());
+    const err = await client.callModel(PARAMS).catch((e) => e);
+    expect(err).toBeInstanceOf(ModelUnavailableError);
+    expect((err as ModelUnavailableError).model).toBe('free/model');
+    // 403 is a hard fail for this model: no backoff, single attempt.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(client.backoffCalls).toEqual([]);
+  });
+
+  it('ModelUnavailableError from a 403 is also an OpenRouterError with status 403', async () => {
+    setFetch(async () => errResponse(403, 'restricted'));
+    const client = new TestClient(makeConfig({}));
+    const err = await client
+      .callModel({ ...PARAMS, model: 'gated/xyz' })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(OpenRouterError);
+    expect((err as OpenRouterError).status).toBe(403);
+    expect((err as ModelUnavailableError).model).toBe('gated/xyz');
   });
 
   it('maps the §5.3 data-policy 404 body to DataPolicyError', async () => {
