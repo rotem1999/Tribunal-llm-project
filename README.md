@@ -21,7 +21,19 @@ A run picks exactly one mode via a toggle:
   from OpenRouter's live free-model roster. This is the interesting comparison against Mode A.
 
 Models are resolved at runtime from OpenRouter's `/models` endpoint, filtered to zero price — model
-names are never hardcoded, because the free roster changes month to month.
+names are never hardcoded, because the free roster changes month to month. Some "free" models are
+gated to approved apps and reject direct calls with a `403`; when a chosen model turns out to be
+restricted, the run learns it, skips it, and retries on another free model — so **"Auto" just works**
+without you having to hand-pick a model.
+
+## Watching a run
+
+A run executes **in the background**: starting one returns immediately with a run id, and the Run page
+shows a live **"tribunal in session"** view — the four advocates and three judges arranged in a
+circle, each spinning while its call is in flight and turning to a check once its speech or verdict
+lands. The page polls lightweight progress (`advocates` phase, then `judges`, then `done`) and reveals
+the full verdicts and economy when the deliberation finishes. If a run fails partway, the page shows
+the error and whatever completed.
 
 ## Token economy
 
@@ -50,9 +62,9 @@ before it can overspend.
   server-side.
 - **`apps/web`** — React + Tailwind (Vite). Talks only to the backend.
 - **`libs/shared-types`** — framework-free TypeScript interfaces and enums (`mode`, `decision`, run
-  `status`) defined once and imported by both apps, so the front/back contract can't drift. The api's
-  DTO classes (which carry Swagger + validation decorators) `implement` these shared interfaces; the
-  web app imports only the plain types.
+  `status`, run `phase`) defined once and imported by both apps, so the front/back contract can't
+  drift. The api's DTO classes (which carry Swagger + validation decorators) `implement` these shared
+  interfaces; the web app imports only the plain types.
 
 The [`SPEC.md`](./SPEC.md) at the repo root is the authoritative blueprint; [`INTENT.txt`](./INTENT.txt)
 is the original brief.
@@ -92,7 +104,8 @@ npx nx serve web        # http://localhost:4200
 ```
 
 Log in with the seeded `SEED_USERNAME` / `SEED_PASSWORD`, open **New Run**, pick a mode, and run the
-tribunal. On first boot the canonical Case **T-001** charge sheet is seeded and shown read-only.
+tribunal — you'll watch the live circle fill in, then land on the verdicts. On first boot the canonical
+Case **T-001** charge sheet is seeded and shown read-only.
 
 ## Nx workspace
 
@@ -132,9 +145,10 @@ npx nx affected -t test lint   # only what your changes touched
 The suite runs entirely with OpenRouter mocked — no network, no real spend.
 
 - **Backend unit tests** (`nx test api`) — pure logic (verdict parsing, tally, speech order, prompt
-  building, budget guard, economy aggregation) with no database.
+  building, budget guard, economy aggregation, model resolution, config validation) with no database.
 - **Backend integration / e2e** (`nx e2e api-e2e`) — boots the real NestJS app against a test Postgres
-  with a fake OpenRouter server (Supertest, in-process).
+  with a fake OpenRouter server (Supertest, in-process); covers a full run, Mode B distinctness, the
+  data-policy error, and the restricted-model fallback.
 - **Frontend component tests** (`nx test web`) — Vitest + React Testing Library + MSW covering the
   components, pages, API client, and routing.
 
@@ -143,11 +157,11 @@ See `SPEC.md` §14 for the full testing strategy.
 ## API docs
 
 With the backend running, Swagger UI is served at **`/api/docs`** and documents every endpoint,
-request/response schema, the enums, the bearer scheme, and the special `401` / `402` / `404` error
-bodies. `openapi.json` is emitted as a build artifact.
+request/response schema, the enums, the bearer scheme, and the special `401` / `402` / `404` / `422`
+error bodies. `openapi.json` is emitted as a build artifact.
 
 ## Per-app docs
 
 - [`apps/api/README.md`](./apps/api/README.md) — env reference, database & migrations, seeding, the
-  OpenRouter privacy-toggle requirement, Nx targets, and where run files land.
-- [`apps/web/README.md`](./apps/web/README.md) — frontend env, serve/build/test.
+  OpenRouter privacy-toggle requirement, the async run model, and where run files land.
+- [`apps/web/README.md`](./apps/web/README.md) — frontend env, serve/build/test, and the live run UI.
