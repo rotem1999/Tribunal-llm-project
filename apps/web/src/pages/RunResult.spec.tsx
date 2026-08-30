@@ -6,11 +6,30 @@ import { Decision, RunStatus, Side } from '@tribunal/shared-types';
 import { RunResult } from './RunResult';
 import { API_BASE, server } from '../test/server';
 import {
+  makePersonas,
+  makeProgress,
   makeRunDetail,
   makeSpeech,
   makeVerdict,
 } from '../test/fixtures';
 import { renderWithProviders } from '../test/utils';
+
+/**
+ * Register the endpoints the page needs: the persona roster + a (terminal)
+ * progress poll so the page loads the full run, then the run itself.
+ */
+function runHandlers(
+  run = makeRunDetail(),
+  progress = makeProgress({ status: run.status }),
+) {
+  server.use(
+    http.get(`${API_BASE}/personas`, () => HttpResponse.json(makePersonas())),
+    http.get(`${API_BASE}/runs/${run.id}/progress`, () =>
+      HttpResponse.json(progress),
+    ),
+    http.get(`${API_BASE}/runs/${run.id}`, () => HttpResponse.json(run)),
+  );
+}
 
 function renderRun(runId = 'run-1') {
   return renderWithProviders(
@@ -23,34 +42,25 @@ function renderRun(runId = 'run-1') {
 
 describe('RunResult', () => {
   it('renders exactly 3 verdicts, the non-binding tally, and NO combined/final verdict', async () => {
-    server.use(
-      http.get(`${API_BASE}/runs/run-1`, () =>
-        HttpResponse.json(makeRunDetail()),
-      ),
-    );
-
+    runHandlers();
     renderRun();
 
-    // Scope to the Judges section (persona keys also appear in the economy table).
     const judges = within(
       (await screen.findByText('Judges')).closest('section') as HTMLElement,
     );
 
-    // All three judges appear as independent verdicts.
-    expect(judges.getByText('judge_one')).toBeInTheDocument();
-    expect(judges.getByText('judge_two')).toBeInTheDocument();
-    expect(judges.getByText('judge_three')).toBeInTheDocument();
+    // All three judges appear by NAME as independent verdicts.
+    expect(judges.getByText('Presiding Justice')).toBeInTheDocument();
+    expect(judges.getByText('Justice Elon')).toBeInTheDocument();
+    expect(judges.getByText('Justice Shamgar')).toBeInTheDocument();
 
-    // Exactly three decision badges — one per verdict — no more, no fewer.
     const badges = judges.getAllByText(/^(justified|not justified)$/);
     expect(badges).toHaveLength(3);
 
-    // The non-binding tally is shown.
-    expect(
-      screen.getByText(/the tribunal issues no combined verdict/i),
-    ).toBeInTheDocument();
+    // Non-binding tally shown as a bare count — no disclaimer copy (UX rule 1).
+    expect(judges.getByText('Justified 2')).toBeInTheDocument();
+    expect(judges.getByText('Not justified 1')).toBeInTheDocument();
 
-    // SPEC: there is never an authoritative/combined/final verdict element.
     expect(screen.queryByTestId('finalDecision')).not.toBeInTheDocument();
     expect(screen.queryByText(/final verdict/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/^winner$/i)).not.toBeInTheDocument();
@@ -61,22 +71,21 @@ describe('RunResult', () => {
       speeches: [
         makeSpeech({
           id: 'sp-1',
-          personaKey: 'advocate_support',
+          personaKey: 'support_1',
+          personaName: 'Jon Snow',
           side: Side.support,
           content: 'Defense argues justification here.',
         }),
         makeSpeech({
           id: 'sp-2',
-          personaKey: 'advocate_against',
+          personaKey: 'against_1',
+          personaName: 'Daenerys Targaryen',
           side: Side.against,
           content: 'Prosecution argues fault here.',
         }),
       ],
     });
-    server.use(
-      http.get(`${API_BASE}/runs/run-1`, () => HttpResponse.json(run)),
-    );
-
+    runHandlers(run);
     renderRun();
 
     expect(
@@ -85,44 +94,57 @@ describe('RunResult', () => {
     expect(
       screen.getByText('Prosecution argues fault here.'),
     ).toBeInTheDocument();
-    // Column headers present.
     expect(screen.getByText('Defense (support)')).toBeInTheDocument();
     expect(screen.getByText('Prosecution (against)')).toBeInTheDocument();
-    // The support speech carries the "defense" badge; against carries "prosecution".
     expect(screen.getByText('defense')).toBeInTheDocument();
     expect(screen.getByText('prosecution')).toBeInTheDocument();
   });
 
-  it('renders the economy panel for the run', async () => {
-    server.use(
-      http.get(`${API_BASE}/runs/run-1`, () =>
-        HttpResponse.json(makeRunDetail()),
-      ),
-    );
-    renderRun();
-    expect(await screen.findByText('Economy')).toBeInTheDocument();
+  it('shows the economy panel on the Economy tab (not the default Verdict tab)', async () => {
+    runHandlers();
+    const { user } = renderRun();
+    // Default tab is Verdict; the economy download is not shown yet.
+    await screen.findByText('Judges');
+    expect(
+      screen.queryByRole('button', { name: /Download JSON/ }),
+    ).not.toBeInTheDocument();
+    // Switch to the Economy tab.
+    await user.click(screen.getByRole('tab', { name: 'Economy' }));
     expect(
       screen.getByRole('button', { name: /Download JSON/ }),
     ).toBeInTheDocument();
   });
 
   it('shows an over-budget banner for an aborted run', async () => {
-    server.use(
-      http.get(`${API_BASE}/runs/run-1`, () =>
-        HttpResponse.json(
-          makeRunDetail({ status: RunStatus.aborted_over_budget }),
-        ),
-      ),
-    );
+    runHandlers(makeRunDetail({ status: RunStatus.aborted_over_budget }));
     renderRun();
     expect(
       await screen.findByText(/Run aborted over budget/i),
     ).toBeInTheDocument();
   });
 
+  it('shows a failure banner (with the error) for a failed run', async () => {
+    runHandlers(
+      makeRunDetail({
+        status: RunStatus.failed,
+        error: 'No free models are available for your OpenRouter account.',
+        speeches: [],
+        verdicts: [],
+      }),
+    );
+    renderRun();
+    expect(
+      await screen.findByText(/The run could not complete/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/No free models are available/i),
+    ).toBeInTheDocument();
+  });
+
   it('surfaces an API error message when the run cannot be loaded', async () => {
     server.use(
-      http.get(`${API_BASE}/runs/missing`, () =>
+      http.get(`${API_BASE}/personas`, () => HttpResponse.json(makePersonas())),
+      http.get(`${API_BASE}/runs/missing/progress`, () =>
         HttpResponse.json({ message: 'Run not found.' }, { status: 404 }),
       ),
     );
@@ -130,23 +152,46 @@ describe('RunResult', () => {
     expect(await screen.findByText('Run not found.')).toBeInTheDocument();
   });
 
+  it('shows the live tribunal circle while a run is still in progress', async () => {
+    const run = makeRunDetail();
+    server.use(
+      http.get(`${API_BASE}/personas`, () => HttpResponse.json(makePersonas())),
+      http.get(`${API_BASE}/runs/${run.id}/progress`, () =>
+        HttpResponse.json(
+          makeProgress({
+            status: RunStatus.running,
+            phase: 'advocates',
+            completedPersonaKeys: ['support_1'],
+          }),
+        ),
+      ),
+      http.get(`${API_BASE}/runs/${run.id}`, () => HttpResponse.json(run)),
+    );
+    renderRun();
+
+    expect(
+      await screen.findByText(/The tribunal is convening/i),
+    ).toBeInTheDocument();
+    // Roster names appear in the circle; 1 of 7 finished.
+    expect(screen.getByText('Jon Snow')).toBeInTheDocument();
+    expect(screen.getByText('1 / 7 finished')).toBeInTheDocument();
+  });
+
   it('renders all three verdict decisions even when unanimous', async () => {
     const run = makeRunDetail({
       verdicts: [
-        makeVerdict({ id: 'v1', personaKey: 'judge_one', decision: Decision.justified }),
-        makeVerdict({ id: 'v2', personaKey: 'judge_two', decision: Decision.justified }),
-        makeVerdict({ id: 'v3', personaKey: 'judge_three', decision: Decision.justified }),
+        makeVerdict({ id: 'v1', personaKey: 'judge_1', personaName: 'Presiding Justice', decision: Decision.justified }),
+        makeVerdict({ id: 'v2', personaKey: 'judge_2', personaName: 'Justice Elon', decision: Decision.justified }),
+        makeVerdict({ id: 'v3', personaKey: 'judge_3', personaName: 'Justice Shamgar', decision: Decision.justified }),
       ],
       verdictTally: { justified: 3, not_justified: 0 },
     });
-    server.use(http.get(`${API_BASE}/runs/run-1`, () => HttpResponse.json(run)));
-
+    runHandlers(run);
     renderRun();
 
     const judges = within(
       (await screen.findByText('Judges')).closest('section') as HTMLElement,
     );
-    // Still three independent verdict badges — no collapsing into one.
     expect(judges.getAllByText(/^(justified|not justified)$/)).toHaveLength(3);
   });
 });

@@ -39,7 +39,7 @@ export function EconomyPanel({ economy }: { economy: RunEconomy }) {
           <tbody className="text-neutral-300">
             {economy.perPersona.map((p) => (
               <tr key={p.personaKey} className="border-t border-divider">
-                <td className="py-1 pr-4">{p.personaKey}</td>
+                <td className="py-1 pr-4">{p.personaName}</td>
                 <td className="py-1 pr-4">{p.model}</td>
                 <td className="py-1 pr-4 text-right">{p.totalTokens}</td>
                 <td className="py-1 text-right">{money(p.costUsd)}</td>

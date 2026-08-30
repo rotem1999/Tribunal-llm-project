@@ -7,7 +7,9 @@ import {
   type ChargeSheet,
   type FreeModel,
   type RunDetail,
+  type PersonaInfo,
   type RunEconomy,
+  type RunProgress,
   type RunSummary,
   type Speech,
   type Verdict,
@@ -21,6 +23,7 @@ export function makeSpeech(overrides: Partial<Speech> = {}): Speech {
     id: 'sp-1',
     runId: 'run-1',
     personaKey: 'advocate_support',
+    personaName: 'Jon Snow',
     side: Side.support,
     model: 'meta-llama/llama-3-8b:free',
     content: 'The accused acted reasonably.',
@@ -40,6 +43,7 @@ export function makeVerdict(overrides: Partial<Verdict> = {}): Verdict {
     id: 'vd-1',
     runId: 'run-1',
     personaKey: 'judge_one',
+    personaName: 'Presiding Justice',
     model: 'meta-llama/llama-3-8b:free',
     decision: Decision.justified,
     confidence: 72,
@@ -65,6 +69,7 @@ export function makeEconomy(overrides: Partial<RunEconomy> = {}): RunEconomy {
     perPersona: [
       {
         personaKey: 'advocate_support',
+        personaName: 'Jon Snow',
         role: PersonaRole.advocate,
         side: Side.support,
         model: 'meta-llama/llama-3-8b:free',
@@ -76,6 +81,7 @@ export function makeEconomy(overrides: Partial<RunEconomy> = {}): RunEconomy {
       },
       {
         personaKey: 'judge_one',
+        personaName: 'Presiding Justice',
         role: PersonaRole.judge,
         side: null,
         model: 'anthropic/claude-3-haiku',
@@ -124,22 +130,35 @@ export function makeRunDetail(overrides: Partial<RunDetail> = {}): RunDetail {
       makeSpeech({
         id: 'sp-1',
         personaKey: 'advocate_support',
+        personaName: 'Jon Snow',
         side: Side.support,
         content: 'Defense argues justification.',
       }),
       makeSpeech({
         id: 'sp-2',
         personaKey: 'advocate_against',
+        personaName: 'Grey Worm',
         side: Side.against,
         content: 'Prosecution argues fault.',
       }),
     ],
     verdicts: [
-      makeVerdict({ id: 'vd-1', personaKey: 'judge_one', decision: Decision.justified }),
-      makeVerdict({ id: 'vd-2', personaKey: 'judge_two', decision: Decision.justified }),
+      makeVerdict({
+        id: 'vd-1',
+        personaKey: 'judge_one',
+        personaName: 'Presiding Justice',
+        decision: Decision.justified,
+      }),
+      makeVerdict({
+        id: 'vd-2',
+        personaKey: 'judge_two',
+        personaName: 'Justice Elon',
+        decision: Decision.justified,
+      }),
       makeVerdict({
         id: 'vd-3',
         personaKey: 'judge_three',
+        personaName: 'Justice Shamgar',
         decision: Decision.not_justified,
       }),
     ],
@@ -185,5 +204,35 @@ export function makeFreeModels(): FreeModel[] {
   return [
     { id: 'meta-llama/llama-3-8b:free', contextLength: 8192 },
     { id: 'mistralai/mistral-7b:free', contextLength: 32768 },
+  ];
+}
+
+export function makeProgress(overrides: Partial<RunProgress> = {}): RunProgress {
+  return {
+    status: RunStatus.completed,
+    phase: 'done',
+    completedPersonaKeys: [
+      'support_1',
+      'support_2',
+      'against_1',
+      'against_2',
+      'judge_1',
+      'judge_2',
+      'judge_3',
+    ],
+    error: null,
+    ...overrides,
+  };
+}
+
+export function makePersonas(): PersonaInfo[] {
+  return [
+    { key: 'support_1', name: 'Jon Snow', role: PersonaRole.advocate, side: Side.support },
+    { key: 'support_2', name: 'Tyrion Lannister', role: PersonaRole.advocate, side: Side.support },
+    { key: 'against_1', name: 'Daenerys Targaryen', role: PersonaRole.advocate, side: Side.against },
+    { key: 'against_2', name: 'Grey Worm', role: PersonaRole.advocate, side: Side.against },
+    { key: 'judge_1', name: 'Presiding Justice', role: PersonaRole.judge, side: null },
+    { key: 'judge_2', name: 'Justice Elon', role: PersonaRole.judge, side: null },
+    { key: 'judge_3', name: 'Justice Shamgar', role: PersonaRole.judge, side: null },
   ];
 }
