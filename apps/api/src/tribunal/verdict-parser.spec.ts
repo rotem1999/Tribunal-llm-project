@@ -9,54 +9,63 @@ import {
 } from './verdict-parser';
 
 /**
- * Judge-output parser (SPEC §5.6). Parses the strict DECISION/CONFIDENCE block
- * out of free-form reasoning. We only ever assert on parsing/structure — never
- * on the model's prose.
+ * Judge-output parser (SPEC §5.6). Parses the strict OPINION/CONFIDENCE/DECISION
+ * block; `reasoning` is the short opinion. We assert on parsing/structure only.
  */
 
-/** Narrowing helper for the union result in assertions. */
 function asParsed(r: ParsedVerdict | NeedsReask): ParsedVerdict {
   if (isNeedsReask(r)) throw new Error('expected a parsed verdict, got needsReask');
   return r;
 }
 
 describe('parseVerdict', () => {
-  it('parses a clean block with reasoning above it', () => {
+  it('parses a clean OPINION/CONFIDENCE/DECISION block into the short opinion', () => {
     const raw = [
-      'The accused acted within the rules of engagement.',
-      'On balance the conduct was defensible.',
-      'DECISION: justified',
+      'OPINION: On balance the conduct was defensible.',
       'CONFIDENCE: 72',
+      'DECISION: justified',
     ].join('\n');
     const parsed = asParsed(parseVerdict(raw));
     expect(parsed.decision).toBe(Decision.justified);
     expect(parsed.confidence).toBe(72);
-    // reasoning keeps the whole (trimmed) text — including the block.
-    expect(parsed.reasoning).toBe(raw);
+    // reasoning is the OPINION line only — not the machine lines.
+    expect(parsed.reasoning).toBe('On balance the conduct was defensible.');
+  });
+
+  it('falls back to block-stripped prose when OPINION is absent', () => {
+    const raw = 'The accused acted within the rules.\nCONFIDENCE: 30\nDECISION: not_justified';
+    const parsed = asParsed(parseVerdict(raw));
+    expect(parsed.decision).toBe(Decision.not_justified);
+    expect(parsed.confidence).toBe(30);
+    expect(parsed.reasoning).toBe('The accused acted within the rules.');
   });
 
   it('parses not_justified', () => {
     const parsed = asParsed(
-      parseVerdict('reasoning\nDECISION: not_justified\nCONFIDENCE: 10'),
+      parseVerdict('OPINION: r\nDECISION: not_justified\nCONFIDENCE: 10'),
     );
     expect(parsed.decision).toBe(Decision.not_justified);
     expect(parsed.confidence).toBe(10);
   });
 
   it('is case-insensitive on the labels and the decision value', () => {
-    const parsed = asParsed(
-      parseVerdict('decision: JUSTIFIED\nconfidence: 55'),
-    );
+    const parsed = asParsed(parseVerdict('decision: JUSTIFIED\nconfidence: 55'));
     expect(parsed.decision).toBe(Decision.justified);
     expect(parsed.confidence).toBe(55);
   });
 
-  it('tolerates extra whitespace after the colon', () => {
+  it('tolerates "confidence level is NN%" phrasing (the observed inconsistency)', () => {
     const parsed = asParsed(
-      parseVerdict('DECISION:    not_justified\nCONFIDENCE:   3'),
+      parseVerdict('OPINION: x\nMy confidence level is 90%.\nDECISION: justified'),
     );
-    expect(parsed.decision).toBe(Decision.not_justified);
-    expect(parsed.confidence).toBe(3);
+    expect(parsed.confidence).toBe(90);
+    expect(parsed.decision).toBe(Decision.justified);
+  });
+
+  it('tolerates CONFIDENCE without a colon', () => {
+    expect(
+      asParsed(parseVerdict('CONFIDENCE 40\nDECISION: justified')).confidence,
+    ).toBe(40);
   });
 
   it('takes the LAST decision when duplicates exist', () => {
@@ -66,8 +75,7 @@ describe('parseVerdict', () => {
       'DECISION: not_justified',
       'CONFIDENCE: 40',
     ].join('\n');
-    const parsed = asParsed(parseVerdict(raw));
-    expect(parsed.decision).toBe(Decision.not_justified);
+    expect(asParsed(parseVerdict(raw)).decision).toBe(Decision.not_justified);
   });
 
   it('clamps confidence above 100 down to 100', () => {
@@ -84,13 +92,11 @@ describe('parseVerdict', () => {
   });
 
   it('needsReask when DECISION is missing', () => {
-    const r = parseVerdict('I think it was fine.\nCONFIDENCE: 80');
-    expect(isNeedsReask(r)).toBe(true);
+    expect(isNeedsReask(parseVerdict('OPINION: fine.\nCONFIDENCE: 80'))).toBe(true);
   });
 
   it('needsReask when CONFIDENCE is missing', () => {
-    const r = parseVerdict('DECISION: justified\n(no confidence given)');
-    expect(isNeedsReask(r)).toBe(true);
+    expect(isNeedsReask(parseVerdict('DECISION: justified\n(no confidence given)'))).toBe(true);
   });
 
   it('needsReask on entirely unrelated text', () => {
@@ -99,13 +105,7 @@ describe('parseVerdict', () => {
   });
 
   it('does not accept an out-of-vocabulary decision word', () => {
-    // "maybe" is not one of the two allowed tokens -> DECISION not found.
     expect(isNeedsReask(parseVerdict('DECISION: maybe\nCONFIDENCE: 50'))).toBe(true);
-  });
-
-  it('trims trailing whitespace/newlines from reasoning', () => {
-    const parsed = asParsed(parseVerdict('  DECISION: justified\nCONFIDENCE: 5  \n\n'));
-    expect(parsed.reasoning).toBe('DECISION: justified\nCONFIDENCE: 5');
   });
 });
 
@@ -119,8 +119,6 @@ describe('fallbackVerdict', () => {
 
   it('carries the trimmed raw text through as reasoning', () => {
     const fv = fallbackVerdict('  garbled model output  ');
-    expect(fv.decision).toBe(Decision.justified);
-    expect(fv.confidence).toBe(0);
     expect(fv.reasoning).toBe('garbled model output');
   });
 });

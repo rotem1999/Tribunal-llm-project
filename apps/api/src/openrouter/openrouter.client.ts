@@ -99,6 +99,21 @@ export class OpenRouterClient {
       // model gated to approved agentic-harness apps). Typed so the pipeline can
       // skip it and try another free model instead of failing the run.
       if (res.status === 403) throw new ModelUnavailableError(params.model);
+      // 400 — a provider-side "invalid argument" (e.g. a Google AI Studio free
+      // model rejecting the request: {"error":{"message":"Provider returned
+      // error",...,"metadata":{"provider_name":"Google AI Studio",...}}}). Treat
+      // it as model-unavailable so the pipeline swaps to another free model
+      // rather than failing the run (SPEC §5.4). An OpenRouter-level 400 (our own
+      // bad request, no provider metadata) still falls through to a hard error.
+      if (
+        res.status === 400 &&
+        /provider returned error|invalid[_ ]argument|provider_name/i.test(errorText)
+      ) {
+        throw new ModelUnavailableError(
+          params.model,
+          `The model "${params.model}" was rejected by its provider (400 invalid argument) — skipping it and trying another free model.`,
+        );
+      }
       // 404 data-policy: the specific free-endpoint privacy error (SPEC §5.3).
       if (res.status === 404 && /data policy|data_policy|endpoints/i.test(errorText)) {
         throw new DataPolicyError();

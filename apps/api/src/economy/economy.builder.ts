@@ -14,10 +14,12 @@ export function buildRunEconomy(
   run: Run,
   speeches: Speech[],
   verdicts: Verdict[],
+  nameFor: (key: string) => string = (k) => k,
 ): RunEconomy {
   const perPersona: PersonaEconomy[] = [
     ...speeches.map((s) => ({
       personaKey: s.personaKey,
+      personaName: nameFor(s.personaKey),
       role: PersonaRole.advocate,
       side: s.side,
       model: s.model,
@@ -29,6 +31,7 @@ export function buildRunEconomy(
     })),
     ...verdicts.map((v) => ({
       personaKey: v.personaKey,
+      personaName: nameFor(v.personaKey),
       role: PersonaRole.judge,
       side: null,
       model: v.model,

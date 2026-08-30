@@ -9,6 +9,8 @@ export type VerdictTally = Record<Decision, number>;
 /** One persona's usage/cost row (all 7 personas appear). */
 export interface PersonaEconomy {
   personaKey: string;
+  /** Display name resolved from personalities.json (SPEC §6a). */
+  personaName: string;
   role: PersonaRole;
   /** Present for advocates; null/absent for judges. */
   side?: Side | null;

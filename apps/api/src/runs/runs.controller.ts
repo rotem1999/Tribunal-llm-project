@@ -18,6 +18,7 @@ import type {
   AuthUser,
   CreateRunResponse,
   RunDetail,
+  RunProgress,
   RunSummary,
 } from '@tribunal/shared-types';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -59,6 +60,16 @@ export class RunsController {
       limit ? Number(limit) : undefined,
       offset ? Number(offset) : undefined,
     );
+  }
+
+  @Get(':id/progress')
+  @ApiOperation({
+    summary: 'Lightweight run progress for the live animation (SPEC §10.1).',
+  })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404 })
+  getProgress(@Param('id') id: string): Promise<RunProgress> {
+    return this.runs.getProgress(id);
   }
 
   @Get(':id')

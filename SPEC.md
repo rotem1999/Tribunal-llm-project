@@ -266,7 +266,7 @@ This is the canonical case extracted from the owner's dossier.
 | systemPrompt | text | exact prompt sent |
 | decision | enum(`justified`,`not_justified`) | parsed from model output |
 | confidence | integer | 0–100, parsed |
-| reasoning | text | the "protocol" for this judge |
+| reasoning | text | the judge's **short opinion** (parsed from `OPINION:`, §5.6); full text in `rawResponse` |
 | rawResponse | text | full model text (fallback if parsing partial) |
 | speechOrderShown | jsonb | order of speeches this judge saw (audit) |
 | promptTokens / completionTokens / totalTokens | integer | |
@@ -301,7 +301,12 @@ OpenRouter, OpenAI-compatible Chat Completions API.
 4. **Mode A:** use `MODE_A_MODEL` env if set and still free/available; else pick candidate #1.
 5. **Mode B:** assign the first 7 distinct candidates to the 7 personas in a fixed persona order.
    If fewer than 7 free models are available, round-robin (reuse) to fill 7, and record the actual
-   assignment on each `Speech`/`Verdict`. Persist the assignment so a run is reproducible.
+   assignment on each `Speech`/`Verdict`. Persist the assignment so a run is reproducible. In
+   practice the number of **distinct** models is bounded by how many free endpoints the account can
+   actually call: OpenRouter gates many `:free` models to approved apps and returns **403**, so those
+   are swapped out (§5.4) and Mode B can collapse to the few callable models — expected behavior, not
+   a failure. Sending both `X-Title` and `HTTP-Referer` (set `OPENROUTER_APP_URL`) unlocks more of
+   them.
 6. Cache the free list to avoid hammering `/models`; refresh on cache miss or on a 404 data-policy
    error (§5.3).
 
@@ -330,6 +335,12 @@ callModel({ model, systemPrompt, userPrompt, temperature, maxTokens }) → {
 - **Retry/backoff:** on HTTP 429 (rate limit) retry with exponential backoff (e.g. 1s, 2s, 4s; max
   4 attempts, jitter). On HTTP 402 (out of credits) abort the whole run with a clear message. On
   the §5.3 404, abort with the actionable message.
+- **Model-specific rejection → swap, don't fail the run:** an HTTP **403** (model gated/restricted)
+  or a **provider-side HTTP 400** ("Provider returned error" / `INVALID_ARGUMENT` — e.g. a Google AI
+  Studio free model that rejects the request) is mapped to `ModelUnavailableError` for *that model
+  only*: the pipeline marks it unavailable and swaps to another free model (§5.2) instead of aborting.
+  A 400 that is **not** a provider error (an OpenRouter-level validation failure of our own request)
+  still surfaces as a hard error so a real bug is not masked.
 - **Timeout:** per-call timeout (e.g. 90s), configurable.
 
 ### 5.5 Run pipeline (`tribunal` module)
@@ -339,32 +350,40 @@ callModel({ model, systemPrompt, userPrompt, temperature, maxTokens }) → {
    snapshot, never re-read the entity (so a mid-flight edit cannot change this run).
 2. Resolve models for the chosen mode (§5.2).
 3. **Advocate phase** — build each advocate's prompt = `{ system: persona.systemPrompt, user:
-   chargeSheetSnapshot }`. Run the 4 calls in parallel. Persist a `Speech` per call. After each call, add
+   chargeSheetSnapshot }`. The advocate prompt constrains output to the in-character speech only — no preamble, meta-commentary, headings, or stage directions — and a conservative sanitizer strips a leading filler line if one slips through. Run the 4 calls in parallel. Persist a `Speech` per call. After each call, add
    its `costUsd` to the running total; if total > `costCeilingUsd`, stop, set status
    `aborted_over_budget`, persist what exists, still write economy, and return. (With free models
    this never triggers; the guard exists for safety and future paid models.)
 4. **Judge phase** — for each judge, compute a **counterbalanced speech order** (rotate the 4
    speeches by judge index; record it). Build prompt = `{ system: judge.systemPrompt, user:
    chargeSheetSnapshot + rendered speeches in that order + a strict output-format instruction }`. Run the 3
-   calls in parallel. Parse each into `{ decision, confidence, reasoning }` (§5.6). Persist a
+   calls in parallel. Parse each into a short `{ decision, confidence, reasoning }` — `reasoning` holds the judge's brief opinion, not a long protocol (§5.6). Persist a
    `Verdict` per judge. Apply the budget guard as in step 3.
 5. **Finalize** — do **not** compute an authoritative combined verdict (INTENT outputs the 3
    verdicts as-is). Optionally compute `verdictTally` = counts of the 3 `decision` values for
    non-binding display. Sum tokens and cost across all 7 calls into the `Run`.
 6. Write the economy JSON file + append to the ledger (§6). Set status `completed`, `completedAt`.
 
+**Execution is asynchronous (see §10.1):** `POST /runs` creates the `Run` (status `running`) and returns `{ runId }` immediately, then runs the phases in the background. If any step throws (including the §5.3 data-policy 404 or the §5.4 402), the run is persisted with status `failed` and an `error` message rather than surfacing as an HTTP error on the POST — the frontend reads it while polling. Speeches and verdicts are persisted as each call resolves, so `GET /runs/:id/progress` reports which personas have finished.
+
 ### 5.6 Verdict output parsing (robust)
-Instruct each judge to end its answer with a strict machine-readable block, while still giving free
-reasoning above it. Prompt suffix (exact intent, wording may be tuned):
+Each judge is instructed to answer with **only** a short, strict, machine-readable block — a brief
+opinion instead of a long protocol, so the output stays on-signal. Prompt suffix (exact intent,
+wording may be tuned; include a concrete example to maximize compliance):
 
-> "First give your reasoning as the trial protocol. Then, on the final lines, output EXACTLY:
-> `DECISION: justified` or `DECISION: not_justified`, then `CONFIDENCE: <integer 0-100>`."
+> "Do NOT write a long protocol. Output ONLY these three lines and nothing else:
+> `OPINION: <your verdict in 1-3 plain sentences>`
+> `CONFIDENCE: <integer 0-100>`
+> `DECISION: justified` — or — `DECISION: not_justified`"
 
-Parser: case-insensitive regex for `DECISION:` and `CONFIDENCE:`. If parsing fails, do a single
-one-shot re-ask ("Reply with only the two lines…") using the same model; if it still fails, store
-`rawResponse`, mark the verdict `decision` via a conservative fallback (`justified` =
-benefit of the doubt to the accused) with `confidence: 0`, and flag the run in `error`. Always keep
-`rawResponse`.
+Parser: case-insensitive regex for `OPINION:`, `CONFIDENCE:`, and `DECISION:`. The `CONFIDENCE`
+match is tolerant (accepts a trailing `%`, a "confidence level:" lead-in, and surrounding words) to
+fix the observed inconsistency where the number was dropped or reformatted; it is clamped to 0-100.
+`reasoning` is set to the parsed `OPINION` (falling back to the block-stripped text if `OPINION` is
+absent but `DECISION` parsed). If `DECISION` or `CONFIDENCE` is missing, do a single one-shot re-ask
+("Reply with ONLY the three lines…") using the same model; if it still fails, store `rawResponse`,
+mark the verdict `decision` via a conservative fallback (`justified` = benefit of the doubt to the
+accused) with `confidence: 0`, and flag the run in `error`. Always keep `rawResponse`.
 
 ---
 
@@ -379,7 +398,7 @@ Per `INTENT.txt` and D8, every completed (or aborted) run produces:
   "chargeSheetChars": 1234,
   "verdictTally": { "justified": 2, "not_justified": 1 },
   "perPersona": [
-    { "personaKey": "support_1", "role": "advocate", "side": "support",
+    { "personaKey": "support_1", "personaName": "Jon Snow", "role": "advocate", "side": "support",
       "model": "…", "promptTokens": 0, "completionTokens": 0, "totalTokens": 0,
       "reasoningTokens": 0, "costUsd": 0.0 }
     // … all 7 personas
@@ -512,21 +531,25 @@ All JSON. All except `/auth/login` require `Authorization: Bearer <jwt>`.
 | POST | `/auth/login` | `{ username, password }` | `{ accessToken }` |
 | GET | `/auth/me` | — | `{ id, username }` |
 | GET | `/models/free` | — | `[{ id, contextLength }]` (cached live free list) |
+| GET | `/personas` | — | roster for display/animation: `[{ key, name, role, side? }]` — no `systemPrompt` |
 | GET | `/charge-sheet` | — | the active charge sheet `{ id, title, content, updatedAt }` |
 | GET | `/charge-sheets` | — | list of all charge sheets (id, title, isActive, updatedAt) |
 | PATCH | `/charge-sheet/:id` | `{ title?, content?, isActive? }` | updates a charge sheet (editable per D9); setting `isActive:true` deactivates the others. **Built and protected, but not surfaced in the v1 UI.** |
-| POST | `/runs` | `{ mode, modelSingle?, chargeSheetId? }` | `{ runId }` — starts a run using `chargeSheetId` or the active charge sheet (see §10.1). No charge-sheet text in the body. |
+| POST | `/runs` | `{ mode, modelSingle?, chargeSheetId? }` | `{ runId }` — **creates** the run (status `running`) and returns immediately; the pipeline runs in the background (see §10.1). Uses `chargeSheetId` or the active charge sheet. No charge-sheet text in the body. |
 | GET | `/runs` | `?limit&offset` | list of run summaries (id, createdAt, mode, verdictTally, totalCostUsd, status) |
-| GET | `/runs/:id` | — | full run: charge, 4 speeches, 3 verdicts (each with protocol), economy, optional non-binding `verdictTally` |
+| GET | `/runs/:id` | — | full run: charge, 4 speeches, 3 verdicts (each with its short opinion), economy, optional non-binding `verdictTally`. Speeches/verdicts include the resolved persona `name`. |
+| GET | `/runs/:id/progress` | — | lightweight progress: `{ status, phase, completedPersonaKeys[], error }` — polled to drive the live animation (§11) |
 | GET | `/runs/:id/economy` | — | the per-run economy JSON (file (a)); `Content-Disposition: attachment` |
 | GET | `/economy/ledger` | — | the cumulative ledger (from DB and/or `ledger.jsonl`) |
 
-### 10.1 Run execution model (v1)
-`POST /runs` executes the pipeline **synchronously** server-side and returns the completed run
-(a run is ~7 sequential-ish calls; expect tens of seconds). The frontend shows a loading/progress
-state. **Extension (not v1):** switch to async (`202` + `GET /runs/:id` polling or SSE) if runs get
-slow or rounds are added. Build the service layer so the controller could return early without a
-rewrite (i.e. orchestration is a service method, not inline in the controller).
+### 10.1 Run execution model
+`POST /runs` **creates** the run (status `running`) and returns `{ runId }` immediately; the ~7-call
+pipeline runs in the background (orchestration stays a service method, not inline in the controller).
+The frontend navigates straight to the live Run Result view and **polls `GET /runs/:id/progress`**
+(~1.5s) to drive the per-persona animation (§11), then loads the full run via `GET /runs/:id` once the
+status is terminal (`completed`, `failed`, or `aborted_over_budget`). A background failure is recorded
+on the run (`status: failed`, `error`) rather than returned from the POST. (Earlier revisions ran this
+synchronously; the async model here is the extension the original §10.1 anticipated.)
 
 ---
 
@@ -537,20 +560,29 @@ Pages:
 - **New Run** — displays the **stored active charge sheet read-only** (from `GET /charge-sheet`; no
   edit/upload control in v1, per D9), a **Mode A/B toggle** with a one-line explanation of each, and
   (Mode A) an optional model picker fed by `GET /models/free`. "Run tribunal" button → `POST /runs`
-  (body carries only `mode` and optional `modelSingle`) → navigates to result on completion.
-- **Run Result** — three regions:
-  1. **Advocates** — 4 SpeechCards grouped Support (defense) vs Against (prosecution).
-  2. **Judges** — 3 VerdictCards side by side, each showing its decision badge
-     (justified/not_justified), confidence, and the full reasoning/protocol. The three verdicts are
-     the output — there is **no combined "final verdict"**. A small, explicitly **non-binding vote
-     tally** ("2 of 3 judges: justified — the tribunal issues no combined verdict") may be shown for
-     convenience only.
-  3. **Economy panel** — per-persona + per-model + totals table (tokens & USD), "$0.00 (free)" shown
-     honestly, and **Download JSON** / view-ledger actions.
+  (body carries only `mode` and optional `modelSingle`) → navigates immediately to the live Run Result view.
+- **Run Result** — a **two-tab view** driven by a small segmented tab bar (UX rule 4: self-evident,
+  no instructions). The default tab is **Verdict**; the other is **Economy**.
+  - **Verdict tab** — **Judges first** (they deliver the verdict; UX rule 2: structure mirrors the
+    domain). The 3 VerdictCards, each titled with the judge's **name**, show a decision badge
+    (justified/not_justified), confidence, and the judge's **short opinion** (§5.6). The persona **name** sits on its own header
+    line so it stays legible even in the narrow judges column — never crowded out by the badge or
+    confidence. Below them, the
+    **Advocates**: 4 SpeechCards grouped Support (defense) vs Against (prosecution), each titled with
+    the persona's **name** (e.g. "Jon Snow"). Every card renders at a **fixed collapsed size** and
+    **expands/collapses on click** (a rotating caret; UX rule 1: compact by default, UX rule 3:
+    immediate feedback). The three verdicts are the output — there is **no combined "final verdict"**.
+    A non-binding tally may appear only as a **bare count** (e.g. "Justified 2 · Not justified 1") —
+    **no disclaimer copy** (UX rule 1: trim explanatory/AI statements; the "no combined verdict"
+    behavior stands regardless of copy).
+  - **Economy tab** — a per-persona (by **name**) + per-model + totals table (tokens & USD), "$0.00 (free)" shown
+    honestly, and **Download JSON** / view-ledger actions.
 - **History** — table of past runs (from `GET /runs`); row click → Run Result.
 
 UX notes: disable the Run button while a run is in flight; surface the §5.3 data-policy error
 verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
+
+**Live run animation:** while a run's status is `running`, the Run Result page shows the roster (4 advocates + 3 judges from `GET /personas`) arranged in a circle, each with a spinning sync icon that turns to a check as that persona's speech/verdict is persisted (polled via `GET /runs/:id/progress`). Judges appear pending until the advocate phase finishes; on terminal status the page swaps to the results view.
 
 ---
 
