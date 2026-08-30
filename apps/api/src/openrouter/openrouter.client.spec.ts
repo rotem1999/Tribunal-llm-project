@@ -213,6 +213,37 @@ describe('OpenRouterClient.callModel — retry + error mapping', () => {
     expect((err as ModelUnavailableError).model).toBe('gated/xyz');
   });
 
+  it('maps a provider-side 400 (invalid argument) to ModelUnavailableError so the pipeline can swap', async () => {
+    const body = JSON.stringify({
+      error: {
+        message: 'Provider returned error',
+        code: 400,
+        metadata: {
+          provider_name: 'Google AI Studio',
+          raw: '{"error":{"code":400,"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT"}}',
+        },
+      },
+    });
+    const fetchMock = setFetch(async () => errResponse(400, body));
+    const client = new TestClient(makeConfig());
+    const err = await client.callModel(PARAMS).catch((e) => e);
+    expect(err).toBeInstanceOf(ModelUnavailableError);
+    expect((err as ModelUnavailableError).model).toBe('free/model');
+    // Hard fail for this model: single attempt, no backoff.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(client.backoffCalls).toEqual([]);
+  });
+
+  it('still fails a non-provider 400 (our own bad request) as a plain OpenRouterError', async () => {
+    const fetchMock = setFetch(async () => errResponse(400, 'Unknown request field'));
+    const client = new TestClient(makeConfig());
+    const err = await client.callModel(PARAMS).catch((e) => e);
+    expect(err).toBeInstanceOf(OpenRouterError);
+    expect(err).not.toBeInstanceOf(ModelUnavailableError);
+    expect((err as OpenRouterError).status).toBe(400);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('maps the §5.3 data-policy 404 body to DataPolicyError', async () => {
     setFetch(async () =>
       errResponse(
