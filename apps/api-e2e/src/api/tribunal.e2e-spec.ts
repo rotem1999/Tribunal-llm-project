@@ -93,6 +93,33 @@ function login(app: INestApplication, username: string, password: string) {
     .send({ username, password });
 }
 
+/**
+ * Runs execute asynchronously (SPEC §10.1): POST returns immediately with the
+ * run in `running`. Poll the progress endpoint until a terminal status, then
+ * return the final progress body (status + error).
+ */
+async function waitForRun(
+  app: INestApplication,
+  runId: string,
+  tok: string,
+  timeoutMs = 20000,
+): Promise<{ status: string; error: string | null }> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const res = await request(app.getHttpServer())
+      .get(`/api/runs/${runId}/progress`)
+      .set({ Authorization: `Bearer ${tok}` });
+    const status = res.body?.status as string | undefined;
+    if (status && status !== 'running' && status !== 'pending') {
+      return { status, error: res.body?.error ?? null };
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`run ${runId} did not finish (last status: ${status})`);
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
 describe('Tribunal API (e2e)', () => {
   let server: http.Server;
   let app: INestApplication;
@@ -153,6 +180,25 @@ describe('Tribunal API (e2e)', () => {
     });
   });
 
+  describe('personas roster', () => {
+    it('serves 7 personas with names and roles, without leaking systemPrompt', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/api/personas')
+        .set(auth())
+        .expect(200);
+      expect(res.body).toHaveLength(7);
+      const advocates = res.body.filter((p: { role: string }) => p.role === 'advocate');
+      const judges = res.body.filter((p: { role: string }) => p.role === 'judge');
+      expect(advocates).toHaveLength(4);
+      expect(judges).toHaveLength(3);
+      for (const p of res.body) {
+        expect(typeof p.name).toBe('string');
+        expect(p.name.length).toBeGreaterThan(0);
+        expect(p.systemPrompt).toBeUndefined();
+      }
+    });
+  });
+
   describe('full run (Mode A)', () => {
     let runId: string;
 
@@ -167,6 +213,7 @@ describe('Tribunal API (e2e)', () => {
     });
 
     it('returns 4 speeches + 3 verdicts + economy + non-binding tally', async () => {
+      await waitForRun(app, runId, token);
       const res = await request(app.getHttpServer())
         .get(`/api/runs/${runId}`)
         .set(auth())
@@ -175,10 +222,15 @@ describe('Tribunal API (e2e)', () => {
       expect(res.body.speeches).toHaveLength(4);
       expect(res.body.verdicts).toHaveLength(3);
       expect(res.body.economy.perPersona).toHaveLength(7);
+      expect(res.body.economy.perPersona[0].personaName).toBeTruthy();
       expect(res.body.verdictTally.justified + res.body.verdictTally.not_justified).toBe(3);
       // No combined/authoritative verdict field.
       expect(res.body.finalDecision).toBeUndefined();
       expect(res.body.verdicts[0].reasoning.length).toBeGreaterThan(0);
+      // Persona display names are resolved on the DTOs (SPEC §5.6/§11).
+      expect(typeof res.body.speeches[0].personaName).toBe('string');
+      expect(res.body.speeches[0].personaName.length).toBeGreaterThan(0);
+      expect(typeof res.body.verdicts[0].personaName).toBe('string');
     });
 
     it('wrote the per-run economy JSON file and the ledger', async () => {
@@ -206,6 +258,7 @@ describe('Tribunal API (e2e)', () => {
         .set(auth())
         .send({ mode: 'B_per_persona' })
         .expect(201);
+      await waitForRun(app, created.body.runId, token);
       const res = await request(app.getHttpServer())
         .get(`/api/runs/${created.body.runId}`)
         .set(auth())
@@ -233,13 +286,15 @@ describe('Tribunal API (e2e)', () => {
       mode = 'ok';
     });
 
-    it('surfaces the data-policy error as an actionable 404 (not 500)', async () => {
-      const res = await request(app2.getHttpServer())
+    it('records the data-policy failure on the run with an actionable message (SPEC §10.1)', async () => {
+      const created = await request(app2.getHttpServer())
         .post('/api/runs')
         .set({ Authorization: `Bearer ${token2}` })
         .send({ mode: 'A_single' })
-        .expect(404);
-      expect(String(res.body.message)).toMatch(/free model|privacy/i);
+        .expect(201);
+      const final = await waitForRun(app2, created.body.runId, token2);
+      expect(final.status).toBe('failed');
+      expect(String(final.error)).toMatch(/free model|privacy/i);
     });
   });
 
@@ -264,6 +319,7 @@ describe('Tribunal API (e2e)', () => {
         .set({ Authorization: `Bearer ${token3}` })
         .send({ mode: 'A_single' })
         .expect(201);
+      await waitForRun(app3, created.body.runId, token3);
       const res = await request(app3.getHttpServer())
         .get(`/api/runs/${created.body.runId}`)
         .set({ Authorization: `Bearer ${token3}` })
