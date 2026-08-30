@@ -114,11 +114,6 @@ export function NewRun() {
         <Button onClick={run} disabled={running}>
           {running ? 'Running the tribunal…' : 'Run tribunal'}
         </Button>
-        {running && (
-          <p className="mt-2 text-xs text-neutral-500">
-            7 model calls — this can take a little while.
-          </p>
-        )}
       </div>
     </div>
   );
