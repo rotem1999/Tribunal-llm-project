@@ -23,6 +23,8 @@ export interface Speech {
   id: string;
   runId: string;
   personaKey: string;
+  /** Display name resolved from personalities.json (SPEC §5.6/§11). */
+  personaName: string;
   side: Side;
   model: string;
   content: string;
@@ -41,6 +43,8 @@ export interface Verdict {
   id: string;
   runId: string;
   personaKey: string;
+  /** Display name resolved from personalities.json (SPEC §5.6/§11). */
+  personaName: string;
   model: string;
   decision: Decision;
   /** 0-100. */
@@ -97,5 +101,21 @@ export interface RunDetail {
   /** ISO-8601 timestamp; null until finished. */
   completedAt?: string | null;
   /** Populated on failure / partial runs. */
+  error?: string | null;
+}
+
+/** Phase of a running tribunal, for the live animation (SPEC §5.5, §10.1). */
+export type RunPhase = 'advocates' | 'judges' | 'done';
+
+/**
+ * Lightweight run progress (`GET /runs/:id/progress`, SPEC §10.1) polled by the
+ * frontend to drive the per-persona circle animation (§11). Not the full run.
+ */
+export interface RunProgress {
+  status: RunStatus;
+  phase: RunPhase;
+  /** Persona keys whose speech/verdict has been persisted so far. */
+  completedPersonaKeys: string[];
+  /** Populated on a failed/partial run. */
   error?: string | null;
 }

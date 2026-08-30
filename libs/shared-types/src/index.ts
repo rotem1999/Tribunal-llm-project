@@ -7,4 +7,5 @@ export * from './auth.js';
 export * from './models.js';
 export * from './charge-sheet.js';
 export * from './economy.js';
+export * from './personas.js';
 export * from './run.js';
