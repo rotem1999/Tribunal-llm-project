@@ -55,6 +55,15 @@
         ],
         "executor": "nx:noop"
       },
+      "test": {
+        "executor": "@nx/jest:jest",
+        "outputs": [
+          "{projectRoot}/test-output/jest/coverage"
+        ],
+        "options": {
+          "jestConfig": "apps/api/jest.config.ts"
+        }
+      },
       "serve": {
         "continuous": true,
         "executor": "@nx/js:node",
@@ -90,6 +99,8 @@
     "tslib": "^2.3.0"
   },
   "devDependencies": {
-    "@nestjs/testing": "^11.0.0"
+    "@nestjs/testing": "^11.0.0",
+    "@swc/jest": "^0.2.39",
+    "jest": "^30.0.0"
   }
 }

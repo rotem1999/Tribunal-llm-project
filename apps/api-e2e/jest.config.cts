@@ -1,24 +1,22 @@
-/* eslint-disable */
-import { readFileSync } from 'fs';
+const { readFileSync } = require('fs');
 
-// Reading the SWC compilation config for the spec files
-const swcJestConfig = JSON.parse(
-  readFileSync(`${__dirname}/.spec.swcrc`, 'utf-8'),
-);
-
-// Disable .swcrc look-up by SWC core because we're passing in swcJestConfig ourselves
+const swcJestConfig = JSON.parse(readFileSync(`${__dirname}/.spec.swcrc`, 'utf-8'));
 swcJestConfig.swcrc = false;
+swcJestConfig.module = { type: 'commonjs' };
 
-export default {
-  displayName: '@org/api-e2e',
-  preset: '../../jest.preset.js',
-  globalSetup: '<rootDir>/src/support/global-setup.ts',
-  globalTeardown: '<rootDir>/src/support/global-teardown.ts',
-  setupFiles: ['<rootDir>/src/support/test-setup.ts'],
+module.exports = {
+  displayName: '@tribunal/api-e2e',
   testEnvironment: 'node',
+  rootDir: '.',
+  moduleFileExtensions: ['ts', 'js', 'json'],
+  testMatch: ['<rootDir>/src/**/*.e2e-spec.ts'],
+  testTimeout: 60000,
+  moduleNameMapper: {
+    '^@tribunal/shared-types$': '<rootDir>/../../libs/shared-types/dist/index.js',
+  },
   transform: {
     '^.+\\.[tj]s$': ['@swc/jest', swcJestConfig],
   },
-  moduleFileExtensions: ['ts', 'js', 'html'],
+  transformIgnorePatterns: ['/node_modules/'],
   coverageDirectory: 'test-output/jest/coverage',
 };

@@ -17,8 +17,7 @@
           "passWithNoTests": true
         },
         "dependsOn": [
-          "@tribunal/api:build",
-          "@tribunal/api:serve"
+          "@tribunal/shared-types:build"
         ]
       }
     },
