@@ -100,6 +100,23 @@ describe('buildRunEconomy', () => {
     expect(judges).toHaveLength(3);
   });
 
+  it('resolves each row personaName via nameFor (defaults to the key)', () => {
+    const { speeches, verdicts } = fullRunData();
+    const named = buildRunEconomy(
+      makeRun(),
+      speeches,
+      verdicts,
+      (k) => `Name(${k})`,
+    );
+    expect(
+      named.perPersona.find((r) => r.personaKey === 'adv1')?.personaName,
+    ).toBe('Name(adv1)');
+    const def = buildRunEconomy(makeRun(), speeches, verdicts);
+    expect(
+      def.perPersona.find((r) => r.personaKey === 'judge1')?.personaName,
+    ).toBe('judge1');
+  });
+
   it('tags advocate rows with their side and judge rows with side null', () => {
     const { speeches, verdicts } = fullRunData();
     const econ = buildRunEconomy(makeRun(), speeches, verdicts);
