@@ -12,12 +12,25 @@ import { z } from 'zod';
 /** Coerce a possibly-string env value into a number, keeping undefined as-is. */
 const numberFromEnv = z.coerce.number();
 
+/**
+ * Treat a blank env value as "unset". Env vars are always strings, so a blank
+ * line in a .env file (e.g. `OPENROUTER_APP_URL=`) arrives as `''` — which is
+ * "present but empty", not "absent". Without this, an empty optional URL would
+ * fail `.url()` instead of falling through to optional/default. Applied to the
+ * URL fields so copying `.env.example` (which lists them blank) boots cleanly.
+ */
+const blankToUndefined = (v: unknown) =>
+  typeof v === 'string' && v.trim() === '' ? undefined : v;
+
 export const envSchema = z.object({
   // --- OpenRouter (SPEC §5, §9) ---
   OPENROUTER_API_KEY: z.string().min(1, 'OPENROUTER_API_KEY is required'),
-  OPENROUTER_BASE_URL: z.string().url().default('https://openrouter.ai/api/v1'),
+  OPENROUTER_BASE_URL: z.preprocess(
+    blankToUndefined,
+    z.string().url().default('https://openrouter.ai/api/v1'),
+  ),
   OPENROUTER_APP_TITLE: z.string().default('Tribunal'),
-  OPENROUTER_APP_URL: z.string().url().optional(),
+  OPENROUTER_APP_URL: z.preprocess(blankToUndefined, z.string().url().optional()),
   MODE_A_MODEL: z.string().optional(),
 
   // --- Run economy / model tuning (SPEC §2.1, §5, §9) ---
