@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { EconomyModule } from '../economy/economy.module';
+import { PersonasModule } from '../personas/personas.module';
 import { TribunalModule } from '../tribunal/tribunal.module';
 import { Run } from './run.entity';
 import { RunsController } from './runs.controller';
@@ -14,6 +15,7 @@ import { Verdict } from './verdict.entity';
     TypeOrmModule.forFeature([Run, Speech, Verdict]),
     TribunalModule,
     EconomyModule,
+    PersonasModule,
   ],
   controllers: [RunsController],
   providers: [RunsService],

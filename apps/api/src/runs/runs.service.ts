@@ -1,15 +1,19 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import type {
-  CreateRunRequest,
-  CreateRunResponse,
-  RunDetail,
-  RunSummary,
-  Speech as SpeechDto,
-  Verdict as VerdictDto,
+import {
+  RunStatus,
+  type CreateRunRequest,
+  type CreateRunResponse,
+  type RunDetail,
+  type RunPhase,
+  type RunProgress,
+  type RunSummary,
+  type Speech as SpeechDto,
+  type Verdict as VerdictDto,
 } from '@tribunal/shared-types';
 import { EconomyService } from '../economy/economy.service';
+import { PersonasService } from '../personas/personas.service';
 import { TribunalService } from '../tribunal/tribunal.service';
 import { Run } from './run.entity';
 import { Speech } from './speech.entity';
@@ -21,6 +25,7 @@ export class RunsService {
   constructor(
     private readonly tribunal: TribunalService,
     private readonly economy: EconomyService,
+    private readonly personas: PersonasService,
     @InjectRepository(Run) private readonly runs: Repository<Run>,
     @InjectRepository(Speech) private readonly speeches: Repository<Speech>,
     @InjectRepository(Verdict) private readonly verdicts: Repository<Verdict>,
@@ -31,8 +36,33 @@ export class RunsService {
     userId: string,
     dto: CreateRunRequest,
   ): Promise<CreateRunResponse> {
-    const run = await this.tribunal.runTribunal(userId, dto);
+    const run = await this.tribunal.createRun(userId, dto);
+    // Execute in the background (SPEC §10.1). executeRun never rejects — it
+    // persists a `failed` status + error on any throw for the client to poll.
+    void this.tribunal.executeRun(run, dto).catch(() => undefined);
     return { runId: run.id };
+  }
+
+  /** Lightweight progress for the live animation (SPEC §10.1, §11). */
+  async getProgress(id: string): Promise<RunProgress> {
+    const run = await this.runs.findOne({ where: { id } });
+    if (!run) throw new NotFoundException(`Run ${id} not found.`);
+    const [speechRows, verdictRows] = await Promise.all([
+      this.speeches.find({ where: { runId: id }, select: { personaKey: true } }),
+      this.verdicts.find({ where: { runId: id }, select: { personaKey: true } }),
+    ]);
+    const completedPersonaKeys = [
+      ...speechRows.map((sp) => sp.personaKey),
+      ...verdictRows.map((v) => v.personaKey),
+    ];
+    const inFlight =
+      run.status === RunStatus.running || run.status === RunStatus.pending;
+    const phase: RunPhase = !inFlight
+      ? 'done'
+      : speechRows.length >= 4
+        ? 'judges'
+        : 'advocates';
+    return { status: run.status, phase, completedPersonaKeys, error: run.error };
   }
 
   async list(limit = 20, offset = 0): Promise<RunSummary[]> {
@@ -65,8 +95,8 @@ export class RunsService {
       status: run.status,
       modelSingle: run.modelSingle,
       chargeSheetSnapshot: run.chargeSheetSnapshot,
-      speeches: speeches.map(toSpeechDto),
-      verdicts: verdicts.map(toVerdictDto),
+      speeches: speeches.map((sp) => toSpeechDto(sp, this.personas.nameFor(sp.personaKey))),
+      verdicts: verdicts.map((v) => toVerdictDto(v, this.personas.nameFor(v.personaKey))),
       economy,
       verdictTally: run.verdictTally,
       totalPromptTokens: run.totalPromptTokens,
@@ -81,11 +111,12 @@ export class RunsService {
   }
 }
 
-function toSpeechDto(s: Speech): SpeechDto {
+function toSpeechDto(s: Speech, personaName: string): SpeechDto {
   return {
     id: s.id,
     runId: s.runId,
     personaKey: s.personaKey,
+    personaName,
     side: s.side,
     model: s.model,
     content: s.content,
@@ -99,11 +130,12 @@ function toSpeechDto(s: Speech): SpeechDto {
   };
 }
 
-function toVerdictDto(v: Verdict): VerdictDto {
+function toVerdictDto(v: Verdict, personaName: string): VerdictDto {
   return {
     id: v.id,
     runId: v.runId,
     personaKey: v.personaKey,
+    personaName,
     model: v.model,
     decision: v.decision,
     confidence: v.confidence,
