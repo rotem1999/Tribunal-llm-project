@@ -2,6 +2,7 @@ import type {
   CreateRunRequest,
   CreateRunResponse,
   RunDetail,
+  RunProgress,
   RunSummary,
 } from '@tribunal/shared-types';
 import { api } from './client';
@@ -14,3 +15,6 @@ export const listRuns = (limit = 20): Promise<RunSummary[]> =>
 
 export const getRun = (id: string): Promise<RunDetail> =>
   api<RunDetail>(`/runs/${id}`);
+
+export const getRunProgress = (id: string): Promise<RunProgress> =>
+  api<RunProgress>(`/runs/${id}/progress`);
