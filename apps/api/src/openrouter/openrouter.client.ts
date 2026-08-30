@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   DataPolicyError,
+  ModelUnavailableError,
   OpenRouterError,
   OutOfCreditsError,
   RateLimitError,
@@ -94,6 +95,10 @@ export class OpenRouterClient {
       }
       // 402 — out of credits: abort, no retry.
       if (res.status === 402) throw new OutOfCreditsError();
+      // 403 — this model is restricted/unavailable for the account (e.g. a free
+      // model gated to approved agentic-harness apps). Typed so the pipeline can
+      // skip it and try another free model instead of failing the run.
+      if (res.status === 403) throw new ModelUnavailableError(params.model);
       // 404 data-policy: the specific free-endpoint privacy error (SPEC §5.3).
       if (res.status === 404 && /data policy|data_policy|endpoints/i.test(errorText)) {
         throw new DataPolicyError();

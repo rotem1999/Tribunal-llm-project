@@ -9,6 +9,7 @@ import {
 import type { Response } from 'express';
 import {
   DataPolicyError,
+  ModelUnavailableError,
   OpenRouterError,
   OutOfCreditsError,
   RateLimitError,
@@ -37,6 +38,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     if (exception instanceof DataPolicyError) {
       status = HttpStatus.NOT_FOUND;
+      message = exception.message;
+    } else if (exception instanceof ModelUnavailableError) {
+      // Restricted/unavailable model(s) — actionable, not a generic 502.
+      status = HttpStatus.UNPROCESSABLE_ENTITY;
       message = exception.message;
     } else if (exception instanceof OutOfCreditsError) {
       status = HttpStatus.PAYMENT_REQUIRED;
