@@ -32,6 +32,9 @@ export const envSchema = z.object({
   OPENROUTER_APP_TITLE: z.string().default('Tribunal'),
   OPENROUTER_APP_URL: z.preprocess(blankToUndefined, z.string().url().optional()),
   MODE_A_MODEL: z.string().optional(),
+  // Extra comma-separated substrings that exclude a "free" model from being an
+  // advocate/judge, on top of the built-in task-type blacklist (SPEC §5.2).
+  MODEL_BLACKLIST: z.string().optional(),
 
   // --- Run economy / model tuning (SPEC §2.1, §5, §9) ---
   RUN_COST_CEILING_USD: numberFromEnv.positive().default(5),

@@ -16,6 +16,10 @@ interface RawModel {
   id: string;
   context_length?: number;
   pricing?: { prompt?: string; completion?: string };
+  architecture?: {
+    input_modalities?: string[];
+    output_modalities?: string[];
+  };
 }
 
 /** Minimal ConfigService stub: known keys, defaults honored, API key required. */
@@ -109,6 +113,54 @@ describe('ModelsService.getFreeModels (filtering + sorting)', () => {
     const models = await service.getFreeModels();
     expect(models.map((m) => m.id)).toEqual(['free/big', 'free/mid', 'free/a']);
     expect(models.map((m) => m.contextLength)).toEqual([128000, 32000, 8000]);
+  });
+
+  it('excludes free models that emit audio (e.g. music generators billed per second, not per token)', async () => {
+    const lyria: RawModel = {
+      id: 'google/lyria-3-pro-preview',
+      context_length: 1048576,
+      pricing: { prompt: '0', completion: '0' },
+      architecture: { output_modalities: ['text', 'audio'] },
+    };
+    const textModel: RawModel = {
+      id: 'good/text-model',
+      context_length: 32000,
+      pricing: { prompt: '0', completion: '0' },
+      architecture: { output_modalities: ['text'] },
+    };
+    mockModelsFetch([lyria, textModel]);
+    const svc = new ModelsService(makeConfig());
+    const ids = (await svc.getFreeModels()).map((m) => m.id);
+    expect(ids).toEqual(['good/text-model']);
+  });
+
+  it('excludes free models whose id matches the built-in task-type blacklist', async () => {
+    mockModelsFetch([
+      {
+        id: 'nvidia/nemotron-3.5-content-safety:free',
+        context_length: 1000000,
+        pricing: { prompt: '0', completion: '0' },
+      },
+      {
+        id: 'cohere/embed-4:free',
+        context_length: 500000,
+        pricing: { prompt: '0', completion: '0' },
+      },
+      freeBig,
+    ]);
+    const svc = new ModelsService(makeConfig());
+    const ids = (await svc.getFreeModels()).map((m) => m.id);
+    expect(ids).toEqual(['free/big']);
+  });
+
+  it('extends the blacklist from the MODEL_BLACKLIST env var (case-insensitive substring)', async () => {
+    mockModelsFetch([
+      { id: 'vendor/Experimental-Alpha', context_length: 9000, pricing: { prompt: '0', completion: '0' } },
+      freeA,
+    ]);
+    const svc = new ModelsService(makeConfig({ MODEL_BLACKLIST: 'experimental, foo' }));
+    const ids = (await svc.getFreeModels()).map((m) => m.id);
+    expect(ids).toEqual(['free/a']);
   });
 
   it('defaults a missing context_length to 0', async () => {

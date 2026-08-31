@@ -3,6 +3,7 @@ import type { ConfigService } from '@nestjs/config';
 import { OpenRouterClient } from './openrouter.client';
 import {
   DataPolicyError,
+  ModelTimeoutError,
   ModelUnavailableError,
   OpenRouterError,
   OutOfCreditsError,
@@ -264,15 +265,39 @@ describe('OpenRouterClient.callModel — retry + error mapping', () => {
     expect((err as OpenRouterError).status).toBe(404);
   });
 
-  it('maps other non-2xx statuses to OpenRouterError carrying the status', async () => {
+  it('maps a bare non-2xx status (no provider fingerprint) to OpenRouterError carrying the status', async () => {
     setFetch(async () => errResponse(503, 'upstream down'));
     const client = new TestClient(makeConfig());
     const err = await client.callModel(PARAMS).catch((e) => e);
     expect(err).toBeInstanceOf(OpenRouterError);
+    expect(err).not.toBeInstanceOf(ModelUnavailableError);
     expect((err as OpenRouterError).status).toBe(503);
   });
 
-  it('surfaces a timeout/abort as an OpenRouterError', async () => {
+  it('maps a provider-side 5xx (upstream/provider error) to ModelUnavailableError so the run swaps models', async () => {
+    setFetch(async () =>
+      errResponse(
+        502,
+        '{"error":{"message":"Provider returned error","metadata":{"provider_name":"Google AI Studio"}}}',
+      ),
+    );
+    const client = new TestClient(makeConfig());
+    const err = await client.callModel(PARAMS).catch((e) => e);
+    expect(err).toBeInstanceOf(ModelUnavailableError);
+    expect((err as ModelUnavailableError).model).toBe('free/model');
+  });
+
+  it('maps a provider "Service temporarily overloaded" 5xx to ModelUnavailableError', async () => {
+    setFetch(async () =>
+      errResponse(500, 'Upstream error from Nvidia: Service temporarily overloaded'),
+    );
+    const client = new TestClient(makeConfig());
+    await expect(client.callModel(PARAMS)).rejects.toBeInstanceOf(
+      ModelUnavailableError,
+    );
+  });
+
+  it('surfaces a timeout/abort as a ModelTimeoutError (an OpenRouterError) so the run can swap', async () => {
     // Tiny timeout; fetch rejects only once the abort signal fires.
     setFetch(
       (...args: unknown[]) =>
@@ -285,10 +310,32 @@ describe('OpenRouterClient.callModel — retry + error mapping', () => {
         }),
     );
     const client = new TestClient(makeConfig({ CALL_TIMEOUT_MS: '5' }));
+    await expect(client.callModel(PARAMS)).rejects.toBeInstanceOf(ModelTimeoutError);
     await expect(client.callModel(PARAMS)).rejects.toBeInstanceOf(OpenRouterError);
-    await expect(
-      client.callModel(PARAMS),
-    ).rejects.toThrow(/timed out/i);
+    await expect(client.callModel(PARAMS)).rejects.toThrow(/timed out/i);
+  });
+
+  it('enforces the timeout over a SLOW BODY, not just slow headers', async () => {
+    // Headers arrive immediately (res.ok), but reading the body hangs until the
+    // abort signal fires — mirrors free endpoints that stream a padded body for
+    // minutes. The timer must still be armed during res.json().
+    setFetch((...args: unknown[]) => {
+      const init = args[1] as { signal?: AbortSignal };
+      const signal = init?.signal;
+      return {
+        ok: true,
+        status: 200,
+        text: async () => '',
+        json: () =>
+          new Promise((_resolve, reject) => {
+            signal?.addEventListener('abort', () =>
+              reject(new Error('The operation was aborted')),
+            );
+          }),
+      };
+    });
+    const client = new TestClient(makeConfig({ CALL_TIMEOUT_MS: '5' }));
+    await expect(client.callModel(PARAMS)).rejects.toBeInstanceOf(ModelTimeoutError);
   });
 
   it('re-throws a non-abort network error as-is', async () => {
