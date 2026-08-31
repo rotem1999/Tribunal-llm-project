@@ -346,6 +346,13 @@ callModel({ model, systemPrompt, userPrompt, temperature, maxTokens }) → {
 - `usage.cost` is **always** returned by OpenRouter (USD; `0` for free models). Read it directly —
   do **not** estimate cost from token counts. Also read `usage.prompt_tokens`,
   `usage.completion_tokens`, and `usage.completion_tokens_details.reasoning_tokens` when present.
+- **Disable model reasoning** on every persona call by sending `reasoning: { enabled: false }`
+  (toggle `DISABLE_MODEL_REASONING`, default on). Many free models otherwise emit their entire
+  chain-of-thought as the message *content* and exhaust `MODEL_MAX_TOKENS` before ever producing the
+  verdict block (§5.6) — turning a clean 3-line answer into multi-KB of gibberish (empirically, one
+  model went from a 140s truncated think-dump to a 2s clean answer). A model that *requires*
+  reasoning returns a 400 ("Reasoning is mandatory … cannot be disabled"); that is mapped to
+  `ModelUnavailableError` (swap) like any other unusable model.
 - **Retry/backoff:** on HTTP 429 (rate limit) retry with exponential backoff (e.g. 1s, 2s, 4s; max
   4 attempts, jitter). On HTTP 402 (out of credits) abort the whole run with a clear message. On
   the §5.3 404, abort with the actionable message.
@@ -403,7 +410,11 @@ wording may be tuned; include a concrete example to maximize compliance):
 > `CONFIDENCE: <integer 0-100>`
 > `DECISION: justified` — or — `DECISION: not_justified`"
 
-Parser: case-insensitive regex for `OPINION:`, `CONFIDENCE:`, and `DECISION:`. The `CONFIDENCE`
+Parser: case-insensitive regex for `OPINION:`, `CONFIDENCE:`, and `DECISION:`. First strip any
+balanced `<think>` / `<thinking>` / `<reasoning>` blocks so a verdict a model *rehearsed inside its
+own reasoning* is never read as the final answer (free-form think prose is prevented at the source by
+disabling reasoning, above). For both `DECISION` and `CONFIDENCE`, take the **last** match — a model
+that restates or echoes the format before its real answer must not win over it. The `CONFIDENCE`
 match is tolerant (accepts a trailing `%`, a "confidence level:" lead-in, and surrounding words) to
 fix the observed inconsistency where the number was dropped or reformatted; it is clamped to 0-100.
 `reasoning` is set to the parsed `OPINION` (falling back to the block-stripped text if `OPINION` is
@@ -538,6 +549,7 @@ All via `@nestjs/config` with schema validation; document in `.env.example`.
 | `JUDGE_TEMPERATURE` | no | `0.2` | |
 | `MODEL_MAX_TOKENS` | no | `1024` | per call output cap |
 | `CALL_TIMEOUT_MS` | no | `90000` | per-call timeout; covers the response-body read, not just headers (§5.4) |
+| `DISABLE_MODEL_REASONING` | no | `true` | send `reasoning:{enabled:false}` so models return the plain verdict block instead of dumping chain-of-thought (§5.4/§5.6) |
 | `DATABASE_URL` | yes | — | Postgres connection |
 | `JWT_SECRET` | yes | — | |
 | `JWT_EXPIRES_IN` | no | `1d` | |
@@ -668,7 +680,7 @@ verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
 | **Personas loader** (§8) | valid file loads 4+3; rejects ≠4 advocates / ≠3 judges; rejects side counts ≠ (2 support, 2 against); rejects duplicate keys; rejects empty `systemPrompt`; fail-fast with a clear message |
 | **Prompt builders** (§5.5, §13) | advocate prompt = `{system: persona, user: chargeSheetSnapshot}` with NO other speeches leaked; judge prompt includes snapshot + all 4 speeches + the `DECISION`/`CONFIDENCE` block; charge sheet embedded as clearly-delimited "case text" (framing string present — prompt-injection surface) |
 | **Charge sheet invariant** (§4.2) | setting `isActive` on one deactivates all others (exactly one active); run snapshots active content at creation; editing the sheet afterward leaves that run's snapshot unchanged |
-| **OpenRouter client** (§5.4, nock) | captures `usage.cost`, prompt/completion tokens, `reasoning_tokens` when present; 429 → backoff-retries then succeeds; exceeds max tries → throws; 402 → no retry, credits error; 404 data-policy body → typed `DataPolicyError` with actionable message; 403 & provider-side 400/5xx → `ModelUnavailableError` (swap), bare 400/5xx → hard error; per-call timeout aborts over a slow **body** (not just headers) → `ModelTimeoutError` |
+| **OpenRouter client** (§5.4, nock) | captures `usage.cost`, prompt/completion tokens, `reasoning_tokens` when present; sends `reasoning:{enabled:false}` when `DISABLE_MODEL_REASONING` (default); 429 → backoff-retries then succeeds; exceeds max tries → throws; 402 → no retry, credits error; 404 data-policy body → typed `DataPolicyError` with actionable message; 403, provider-side 400/5xx, and the "reasoning is mandatory" 400 → `ModelUnavailableError` (swap), bare 400/5xx → hard error; per-call timeout aborts over a slow **body** (not just headers) → `ModelTimeoutError` |
 | **Auth** | argon2id hash/verify round-trip; JWT sign/verify; expired token rejected; seed is idempotent (no duplicate user on second boot) |
 
 ### 14.3 Backend integration / e2e (Supertest + Testcontainers-postgres + nock)

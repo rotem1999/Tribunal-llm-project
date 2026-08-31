@@ -150,6 +150,29 @@ describe('OpenRouterClient.callModel — success + usage capture', () => {
       { role: 'user', content: 'user' },
     ]);
   });
+
+  it('disables model reasoning by default (reasoning:{enabled:false})', async () => {
+    const fetchMock = setFetch(async () =>
+      okResponse({ choices: [{ message: { content: 'x' } }], usage: {} }),
+    );
+    await client.callModel(PARAMS);
+    const body = JSON.parse(
+      (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string,
+    );
+    expect(body.reasoning).toEqual({ enabled: false });
+  });
+
+  it('omits the reasoning field when DISABLE_MODEL_REASONING=false', async () => {
+    const fetchMock = setFetch(async () =>
+      okResponse({ choices: [{ message: { content: 'x' } }], usage: {} }),
+    );
+    const optIn = new TestClient(makeConfig({ DISABLE_MODEL_REASONING: 'false' }));
+    await optIn.callModel(PARAMS);
+    const body = JSON.parse(
+      (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string,
+    );
+    expect(body.reasoning).toBeUndefined();
+  });
 });
 
 describe('OpenRouterClient.callModel — retry + error mapping', () => {
@@ -295,6 +318,19 @@ describe('OpenRouterClient.callModel — retry + error mapping', () => {
     await expect(client.callModel(PARAMS)).rejects.toBeInstanceOf(
       ModelUnavailableError,
     );
+  });
+
+  it('maps a "reasoning is mandatory" 400 to ModelUnavailableError so the run swaps', async () => {
+    setFetch(async () =>
+      errResponse(
+        400,
+        '{"error":{"message":"Reasoning is mandatory for this endpoint and cannot be disabled.","code":400}}',
+      ),
+    );
+    const client = new TestClient(makeConfig());
+    const err = await client.callModel(PARAMS).catch((e) => e);
+    expect(err).toBeInstanceOf(ModelUnavailableError);
+    expect((err as ModelUnavailableError).model).toBe('free/model');
   });
 
   it('surfaces a timeout/abort as a ModelTimeoutError (an OpenRouterError) so the run can swap', async () => {

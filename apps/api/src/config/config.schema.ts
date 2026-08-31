@@ -22,6 +22,21 @@ const numberFromEnv = z.coerce.number();
 const blankToUndefined = (v: unknown) =>
   typeof v === 'string' && v.trim() === '' ? undefined : v;
 
+/**
+ * Parse a boolean env value. Env vars are strings, so `z.coerce.boolean()` is
+ * wrong here (it treats the string `"false"` as `true`). Accepts the usual
+ * truthy/falsy spellings; anything else falls through to zod's error.
+ */
+const booleanFromEnv = z.preprocess((v) => {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(s)) return true;
+    if (['false', '0', 'no', 'off'].includes(s)) return false;
+  }
+  return v;
+}, z.boolean());
+
 export const envSchema = z.object({
   // --- OpenRouter (SPEC §5, §9) ---
   OPENROUTER_API_KEY: z.string().min(1, 'OPENROUTER_API_KEY is required'),
@@ -42,6 +57,10 @@ export const envSchema = z.object({
   JUDGE_TEMPERATURE: numberFromEnv.min(0).max(2).default(0.2),
   MODEL_MAX_TOKENS: numberFromEnv.int().positive().default(1024),
   CALL_TIMEOUT_MS: numberFromEnv.int().positive().default(90000),
+  // Ask OpenRouter to disable model "reasoning" on persona calls. Many free
+  // models otherwise dump their entire chain-of-thought into the response and
+  // exhaust MODEL_MAX_TOKENS before emitting the required verdict block (§5.6).
+  DISABLE_MODEL_REASONING: booleanFromEnv.default(true),
 
   // --- Persistence (SPEC §4, §9) ---
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),

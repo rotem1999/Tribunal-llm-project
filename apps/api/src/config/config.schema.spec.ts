@@ -96,6 +96,18 @@ describe('validateEnv', () => {
       expect(env.PERSONAS_FILE).toBe('personalities.json');
       expect(env.CHARGE_SHEET_SEED_FILE).toBe('charge-sheet.seed.txt');
       expect(env.PORT).toBe(3000);
+      expect(env.DISABLE_MODEL_REASONING).toBe(true);
+    });
+
+    it('parses DISABLE_MODEL_REASONING="false" as the boolean false (not truthy string)', () => {
+      expect(
+        validateEnv(validEnv({ DISABLE_MODEL_REASONING: 'false' }))
+          .DISABLE_MODEL_REASONING,
+      ).toBe(false);
+      expect(
+        validateEnv(validEnv({ DISABLE_MODEL_REASONING: 'true' }))
+          .DISABLE_MODEL_REASONING,
+      ).toBe(true);
     });
 
     it('leaves purely-optional vars (no default) undefined when omitted', () => {

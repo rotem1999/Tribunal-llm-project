@@ -27,8 +27,9 @@ export const ADVOCATE_OUTPUT_INSTRUCTION = [
  * inconsistently returned).
  */
 export const VERDICT_OUTPUT_INSTRUCTION = [
-  'Do NOT write a long protocol. Reply with ONLY these three lines, nothing else,',
-  'in this exact format:',
+  'Do NOT write a long protocol and do NOT show your reasoning or thinking',
+  '(no analysis, no notes, no <think> tags, nothing before OPINION).',
+  'Reply with ONLY these three lines, nothing else, in this exact format:',
   'OPINION: <your verdict in 1-3 plain sentences>',
   'CONFIDENCE: <integer 0-100>',
   'DECISION: justified   — or —   DECISION: not_justified',
