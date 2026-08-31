@@ -81,7 +81,7 @@ export function Eyebrow({ children }: { children: ReactNode }) {
 }
 
 /** Rotating caret — the only affordance a collapsible needs (UX rule 4). */
-function Caret({ open }: { open: boolean }) {
+export function Caret({ open }: { open: boolean }) {
   return (
     <svg
       viewBox="0 0 24 24"

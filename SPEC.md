@@ -608,10 +608,16 @@ Pages:
     (justified/not_justified), confidence, and the judge's **short opinion** (§5.6). The persona **name** sits on its own header
     line so it stays legible even in the narrow judges column — never crowded out by the badge or
     confidence. Below them, the
-    **Advocates**: 4 SpeechCards grouped Support (defense) vs Against (prosecution), each titled with
-    the persona's **name** (e.g. "Jon Snow"). Every card renders at a **fixed collapsed size** and
-    **expands/collapses on click** (a rotating caret; UX rule 1: compact by default, UX rule 3:
-    immediate feedback). The three verdicts are the output — there is **no combined "final verdict"**.
+    The three judge cards share **one group expand/collapse control** on the Judges section header
+    (a rotating caret / "Expand all" affordance), **not** a control on each card: readers either open
+    **all** judgements at once (every card expanded) or see them **all** cut to a fixed collapsed
+    size — there is deliberately **no per-judge toggle**. (Rationale: the cards sit in one
+    shared-height grid row, so expanding a single card stretches its neighbours to the same height
+    while leaving them collapsed and empty — you could never actually read an individual judge.) Below
+    them, the **Advocates**: 4 SpeechCards grouped Support (defense) vs Against (prosecution), each
+    titled with the persona's **name** (e.g. "Jon Snow"); these stack vertically, so each keeps its
+    own **per-card** fixed-collapsed-size **expand/collapse-on-click** (a rotating caret; UX rule 1:
+    compact by default, UX rule 3: immediate feedback). The three verdicts are the output — there is **no combined "final verdict"**.
     A non-binding tally may appear only as a **bare count** (e.g. "Justified 2 · Not justified 1") —
     **no disclaimer copy** (UX rule 1: trim explanatory/AI statements; the "no combined verdict"
     behavior stands regardless of copy).
@@ -705,7 +711,7 @@ verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
 | Component | Cases |
 |-----------|-------|
 | **VerdictCard** | correct badge label/color for `justified` vs `not_justified`; confidence shown; reasoning rendered |
-| **Verdict list + tally** | the 3 VerdictCards all render; the non-binding tally shows correct counts and its "no combined verdict" label; assert there is no single "final verdict" element |
+| **Verdict list + tally** | the 3 VerdictCards all render; a single group control expands/collapses **all** judge cards together (no per-card toggle — all readable or all cut); the non-binding tally shows correct counts and its "no combined verdict" label; assert there is no single "final verdict" element |
 | **EconomyPanel** | per-persona table + per-model rollup + totals render; `$0.00 (free)` shown when cost is 0; Download JSON triggers the correct request/blob |
 | **ModeToggle** | Mode A shows the model picker, Mode B hides it; submit payload carries the chosen mode (+ `modelSingle` only in A) |
 | **NewRun page** | charge sheet shown **read-only**; assert NO textarea/upload/edit control exists (guards D9); Run button disabled while the request is in flight |
