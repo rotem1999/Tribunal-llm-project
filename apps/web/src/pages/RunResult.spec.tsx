@@ -66,6 +66,26 @@ describe('RunResult', () => {
     expect(screen.queryByText(/^winner$/i)).not.toBeInTheDocument();
   });
 
+  it('expands/collapses ALL judge cards with a single group control (no per-judge toggle)', async () => {
+    runHandlers();
+    const { user } = renderRun();
+
+    const judges = within(
+      (await screen.findByText('Judges')).closest('section') as HTMLElement,
+    );
+
+    // Exactly one expand/collapse control governs all three judges.
+    const toggle = judges.getByRole('button', { name: /expand all/i });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(judges.queryByRole('button', { name: /collapse all/i })).toBeNull();
+
+    // Opening it flips the whole group to expanded — one control, all cards.
+    await user.click(toggle);
+    const collapse = judges.getByRole('button', { name: /collapse all/i });
+    expect(collapse).toHaveAttribute('aria-expanded', 'true');
+    expect(judges.queryByRole('button', { name: /expand all/i })).toBeNull();
+  });
+
   it('groups speeches into defense (support) and prosecution (against)', async () => {
     const run = makeRunDetail({
       speeches: [

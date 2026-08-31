@@ -15,6 +15,7 @@ import { SpeechCard } from '../components/SpeechCard';
 import { TribunalCircle } from '../components/TribunalCircle';
 import { VerdictCard } from '../components/VerdictCard';
 import { VerdictTally } from '../components/VerdictTally';
+import { Caret } from '../components/ui';
 
 const TERMINAL = new Set<RunStatus>([
   RunStatus.completed,
@@ -70,6 +71,9 @@ export function RunResult() {
   const [run, setRun] = useState<RunDetail | null>(null);
   const [error, setError] = useState('');
   const [tab, setTab] = useState<Tab>('verdict');
+  // The 3 judge cards share one open/closed state (SPEC §11): all readable or
+  // all cut — there is no per-judge toggle.
+  const [judgesOpen, setJudgesOpen] = useState(false);
 
   useEffect(() => {
     getPersonas().then(setPersonas).catch(() => undefined);
@@ -152,15 +156,26 @@ export function RunResult() {
         <>
           {run.verdicts.length > 0 && (
             <section className="space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-xs uppercase tracking-[0.12em] text-neutral-500">
                   Judges
                 </h2>
-                <VerdictTally tally={run.verdictTally} />
+                <div className="flex items-center gap-3">
+                  <VerdictTally tally={run.verdictTally} />
+                  <button
+                    type="button"
+                    onClick={() => setJudgesOpen((o) => !o)}
+                    aria-expanded={judgesOpen}
+                    className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs text-neutral-300 transition-colors hover:bg-accent/5"
+                  >
+                    {judgesOpen ? 'Collapse all' : 'Expand all'}
+                    <Caret open={judgesOpen} />
+                  </button>
+                </div>
               </div>
               <div className="grid gap-4 md:grid-cols-3">
                 {run.verdicts.map((v) => (
-                  <VerdictCard key={v.id} verdict={v} />
+                  <VerdictCard key={v.id} verdict={v} open={judgesOpen} />
                 ))}
               </div>
             </section>
