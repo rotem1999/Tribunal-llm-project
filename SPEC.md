@@ -296,7 +296,17 @@ OpenRouter, OpenAI-compatible Chat Completions API.
 1. Fetch `GET /models`. Each entry exposes `id`, `context_length`, and a `pricing` object with
    per-token string prices (`prompt`, `completion`).
 2. **Free filter:** keep models where `pricing.prompt === "0"` **and** `pricing.completion === "0"`.
-   (These are the `:free` endpoints. IDs typically end in `:free`.)
+   (These are the `:free` endpoints. IDs typically end in `:free`.) Then keep only models usable as
+   a **text advocate/judge**:
+   - **Text output only** — require `architecture.output_modalities` to be text and reject any that
+     also emit `audio`. This unmasks endpoints whose token prices are `"0"` because they bill per
+     second of media rather than per token (e.g. Google's Lyria music models), which the price filter
+     alone lets through.
+   - **Task-type blacklist** — drop models whose id contains a blacklisted substring (case-insensitive):
+     classifiers, safety/moderation graders, embedders, rerankers, and audio/speech models
+     (`content-safety`, `moderation`, `guard`, `embed`, `rerank`, `lyria`, `whisper`, `tts`, `stt`).
+     These often return HTTP 200 with empty/degenerate text. Blacklist a **category by name token**,
+     never a specific model id (ids drift monthly). Extend at runtime via `MODEL_BLACKLIST` (§9).
 3. Sort candidates by `context_length` descending (need room for charge + 4 speeches for judges).
 4. **Mode A:** use `MODE_A_MODEL` env if set and still free/available; else pick candidate #1.
 5. **Mode B:** assign the first 7 distinct candidates to the 7 personas in a fixed persona order.
@@ -306,7 +316,11 @@ OpenRouter, OpenAI-compatible Chat Completions API.
    actually call: OpenRouter gates many `:free` models to approved apps and returns **403**, so those
    are swapped out (§5.4) and Mode B can collapse to the few callable models — expected behavior, not
    a failure. Sending both `X-Title` and `HTTP-Referer` (set `OPENROUTER_APP_URL`) unlocks more of
-   them.
+   them. Because the 4 advocate (then 3 judge) calls run in parallel, seed the "already-placed" set
+   with the whole resolved assignment before the phase starts, so a persona whose model is rejected
+   *fast* (an instant 403) does not swap onto a model another persona is already mid-call with — the
+   collision that otherwise collapses Mode B onto one model. Prefer a not-yet-placed replacement;
+   fall back to reusing a working model (round-robin) only when the roster is exhausted.
 6. Cache the free list to avoid hammering `/models`; refresh on cache miss or on a 404 data-policy
    error (§5.3).
 
@@ -335,13 +349,26 @@ callModel({ model, systemPrompt, userPrompt, temperature, maxTokens }) → {
 - **Retry/backoff:** on HTTP 429 (rate limit) retry with exponential backoff (e.g. 1s, 2s, 4s; max
   4 attempts, jitter). On HTTP 402 (out of credits) abort the whole run with a clear message. On
   the §5.3 404, abort with the actionable message.
-- **Model-specific rejection → swap, don't fail the run:** an HTTP **403** (model gated/restricted)
-  or a **provider-side HTTP 400** ("Provider returned error" / `INVALID_ARGUMENT` — e.g. a Google AI
-  Studio free model that rejects the request) is mapped to `ModelUnavailableError` for *that model
-  only*: the pipeline marks it unavailable and swaps to another free model (§5.2) instead of aborting.
-  A 400 that is **not** a provider error (an OpenRouter-level validation failure of our own request)
-  still surfaces as a hard error so a real bug is not masked.
-- **Timeout:** per-call timeout (e.g. 90s), configurable.
+- **Model-specific rejection → swap, don't fail the run:** the following are each mapped to a typed
+  error for *that model only* — the pipeline marks it unavailable and swaps to another free model
+  (§5.2) instead of aborting the run:
+  - an HTTP **403** (model gated/restricted → `ModelUnavailableError`);
+  - a **provider-side error** — an HTTP **400** *or* a **5xx** that OpenRouter tags with provider
+    metadata ("Provider returned error" / `INVALID_ARGUMENT` / `provider_name` / "Upstream error …
+    temporarily overloaded" — e.g. a Google AI Studio free model that rejects or fails the request →
+    `ModelUnavailableError`);
+  - a **per-call timeout** (§ Timeout below → `ModelTimeoutError`) — several free endpoints hang;
+  - an **HTTP 200 with empty text** (some "free" models are classifiers, or reasoning models that
+    spend the whole token budget on hidden reasoning and return nothing usable) — treated as
+    unavailable in the pipeline so an empty speech/verdict is never persisted.
+
+  A 400/5xx that is **not** a provider error (an OpenRouter-level validation failure of our own
+  request, or a bare gateway error with no provider fingerprint) still surfaces as a hard error so a
+  real bug is not masked. Swaps are bounded (a few attempts per persona), then the run fails.
+- **Timeout:** per-call timeout (e.g. 90s), configurable. The timeout **must cover the response-body
+  read**, not just the connection/headers: free endpoints return headers in milliseconds and then
+  stream a whitespace-padded body while the upstream generates (sometimes for minutes, sometimes
+  never finishing), so the abort timer stays armed through the body read.
 
 ### 5.5 Run pipeline (`tribunal` module)
 1. Load the charge sheet: use the request's `chargeSheetId` if given, else the `isActive`
@@ -505,11 +532,12 @@ All via `@nestjs/config` with schema validation; document in `.env.example`.
 | `OPENROUTER_APP_TITLE` | no | `Tribunal` | sent as `X-Title` |
 | `OPENROUTER_APP_URL` | no | — | sent as `HTTP-Referer` |
 | `MODE_A_MODEL` | no | auto (first free) | pin Mode A's single model if desired |
+| `MODEL_BLACKLIST` | no | — | extra comma-separated substrings that exclude a "free" model from being an advocate/judge, on top of the built-in task-type blacklist (§5.2); matched case-insensitively against the model id |
 | `RUN_COST_CEILING_USD` | no | `5` | hard per-run ceiling (INTENT's $5) |
 | `ADVOCATE_TEMPERATURE` | no | `0.9` | |
 | `JUDGE_TEMPERATURE` | no | `0.2` | |
 | `MODEL_MAX_TOKENS` | no | `1024` | per call output cap |
-| `CALL_TIMEOUT_MS` | no | `90000` | |
+| `CALL_TIMEOUT_MS` | no | `90000` | per-call timeout; covers the response-body read, not just headers (§5.4) |
 | `DATABASE_URL` | yes | — | Postgres connection |
 | `JWT_SECRET` | yes | — | |
 | `JWT_EXPIRES_IN` | no | `1d` | |
@@ -633,14 +661,14 @@ verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
 |-----------|----------------|
 | **Verdict parser** (§5.6) | parses `justified`/`not_justified` + confidence from multiline text with reasoning above; case-insensitive; trailing punctuation/whitespace tolerated; confidence clamped to 0–100; missing `DECISION:` or `CONFIDENCE:` → `needsReask`; conflicting duplicate `DECISION:` lines → documented rule (take last); total failure after re-ask → fallback `{justified, 0}` + flag |
 | **Verdict tally** (§5.5, non-binding) | counts the 3 `decision` values correctly (3–0, 2–1, 0–3); confidence never changes the counts; guard requires exactly 3 verdicts; asserts **no** authoritative combined `finalDecision` field is produced (INTENT conformance) |
-| **Free-model filter & assignment** (§5.2) | keeps only `prompt=="0" && completion=="0"`; excludes free-prompt/paid-completion; sorts by `context_length` desc; Mode A picks #1, honors `MODE_A_MODEL` only when still free; Mode B assigns 7 distinct, round-robins deterministically when < 7 exist, records assignment; empty free list → throws the actionable no-free-models error |
+| **Free-model filter & assignment** (§5.2) | keeps only `prompt=="0" && completion=="0"`; excludes free-prompt/paid-completion; excludes non-text/audio-output models (e.g. Lyria) and blacklisted task types (built-in list + `MODEL_BLACKLIST`, case-insensitive substring); sorts by `context_length` desc; Mode A picks #1, honors `MODE_A_MODEL` only when still free; Mode B assigns 7 distinct, round-robins deterministically when < 7 exist, records assignment; empty free list → throws the actionable no-free-models error |
 | **Counterbalanced speech order** (§5.5) | judge *i* gets rotation *i*; the 3 judges get 3 distinct orders; recorded order == rendered order; deterministic (no RNG) |
 | **Economy builder** (§6) | sums `usage.cost` (free → `0.00`); per-persona rows for all 7; per-model rollup groups by model id with call counts; token totals correct; JSON shape matches §6 (snapshot test); ledger line shape `{runId,createdAt,mode,totalTokens,costUsd,verdictTally}` |
 | **Budget guard** (§5.5) | cumulative cost > ceiling → status `aborted_over_budget`, remaining calls skipped; ceiling read from the run *snapshot* not live config; partial rows + economy still persisted |
 | **Personas loader** (§8) | valid file loads 4+3; rejects ≠4 advocates / ≠3 judges; rejects side counts ≠ (2 support, 2 against); rejects duplicate keys; rejects empty `systemPrompt`; fail-fast with a clear message |
 | **Prompt builders** (§5.5, §13) | advocate prompt = `{system: persona, user: chargeSheetSnapshot}` with NO other speeches leaked; judge prompt includes snapshot + all 4 speeches + the `DECISION`/`CONFIDENCE` block; charge sheet embedded as clearly-delimited "case text" (framing string present — prompt-injection surface) |
 | **Charge sheet invariant** (§4.2) | setting `isActive` on one deactivates all others (exactly one active); run snapshots active content at creation; editing the sheet afterward leaves that run's snapshot unchanged |
-| **OpenRouter client** (§5.4, nock) | captures `usage.cost`, prompt/completion tokens, `reasoning_tokens` when present; 429 → backoff-retries then succeeds; exceeds max tries → throws; 402 → no retry, credits error; 404 data-policy body → typed `DataPolicyError` with actionable message; per-call timeout aborts |
+| **OpenRouter client** (§5.4, nock) | captures `usage.cost`, prompt/completion tokens, `reasoning_tokens` when present; 429 → backoff-retries then succeeds; exceeds max tries → throws; 402 → no retry, credits error; 404 data-policy body → typed `DataPolicyError` with actionable message; 403 & provider-side 400/5xx → `ModelUnavailableError` (swap), bare 400/5xx → hard error; per-call timeout aborts over a slow **body** (not just headers) → `ModelTimeoutError` |
 | **Auth** | argon2id hash/verify round-trip; JWT sign/verify; expired token rejected; seed is idempotent (no duplicate user on second boot) |
 
 ### 14.3 Backend integration / e2e (Supertest + Testcontainers-postgres + nock)
@@ -653,6 +681,9 @@ verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
 - **Charge sheet:** `GET /charge-sheet` returns the active one; `PATCH /charge-sheet/:id` content is
   reflected in the *next* run's snapshot; `PATCH … {isActive:true}` flips the active flag and clears
   the previous active.
+- **Model swap (resilience, §5.4):** a model that returns 403 "agentic harness only", a provider-side
+  5xx, or an empty 200 body is skipped and the run completes on another free model — the persisted
+  rows never reference the skipped model.
 - **Failure surfaces:** OpenRouter 404 data-policy → API returns the actionable message (not 500);
   OpenRouter 402 → run `failed` with credits message; ceiling `0.0001` → run `aborted_over_budget`
   with partial rows persisted.

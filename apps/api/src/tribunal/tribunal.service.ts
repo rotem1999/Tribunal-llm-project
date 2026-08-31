@@ -10,7 +10,10 @@ import {
 import { ChargeSheetsService } from '../chargesheets/chargesheets.service';
 import { EconomyService } from '../economy/economy.service';
 import { OpenRouterClient } from '../openrouter/openrouter.client';
-import { ModelUnavailableError } from '../openrouter/openrouter.errors';
+import {
+  ModelTimeoutError,
+  ModelUnavailableError,
+} from '../openrouter/openrouter.errors';
 import type {
   CallModelParams,
   CallModelResult,
@@ -64,10 +67,13 @@ export class TribunalService {
 
   /**
    * Call a persona's model, transparently swapping to another free model when
-   * the chosen one is restricted/unavailable (OpenRouter 403 — e.g. free models
-   * gated to approved apps; SPEC §5.2). Returns the model actually used so
-   * persistence records the truth. `used` tracks models already placed this run
-   * so Mode B keeps its per-persona models distinct where possible.
+   * the chosen one is unusable: an OpenRouter 403 (gated to approved apps), a
+   * provider-side rejection (§5.4), a per-call timeout ({@link ModelTimeoutError}
+   * — several free endpoints hang), or an HTTP 200 with empty text (classifiers
+   * / reasoning models that spend the whole budget on hidden tokens). Returns
+   * the model actually used so persistence records the truth. `used` tracks
+   * models already placed this run so Mode B keeps its per-persona models
+   * distinct where possible.
    */
   private async callPersona(
     params: Omit<CallModelParams, 'model'>,
@@ -80,25 +86,35 @@ export class TribunalService {
       tried.add(model);
       try {
         const res = await this.openrouter.callModel({ ...params, model });
+        if (res.content.trim().length === 0) {
+          // 200 OK but nothing usable — treat like an unavailable model and swap
+          // rather than persisting an empty speech/verdict.
+          throw new ModelUnavailableError(
+            model,
+            `The model "${model}" returned an empty response.`,
+          );
+        }
         used.add(model);
         return { res, model };
       } catch (err) {
-        if (
-          !(err instanceof ModelUnavailableError) ||
-          attempt >= TribunalService.MAX_MODEL_SWAPS
-        ) {
+        const swappable =
+          err instanceof ModelUnavailableError || err instanceof ModelTimeoutError;
+        if (!swappable || attempt >= TribunalService.MAX_MODEL_SWAPS) {
           throw err;
         }
         this.models.markUnavailable(model);
-        const next = await this.models.pickReplacement(
-          new Set([...used, ...tried]),
-        );
+        // Prefer a model not yet placed this run (keeps Mode B distinct); if the
+        // roster is exhausted, fall back to reusing a working model — excluding
+        // only ones this persona already tried and failed (SPEC §5.2 round-robin).
+        const next =
+          (await this.models.pickReplacement(new Set([...used, ...tried]))) ??
+          (await this.models.pickReplacement(tried));
         if (!next) throw err;
         // Reserve the replacement immediately so other personas running in
         // parallel (Mode B) don't all swap onto the same model (SPEC §5.2).
         used.add(next);
         this.logger.warn(
-          `Model "${model}" is restricted/unavailable — retrying persona with "${next}".`,
+          `Model "${model}" is unusable (${(err as Error).name}) — retrying persona with "${next}".`,
         );
         model = next;
       }
@@ -158,7 +174,17 @@ export class TribunalService {
 
       // Models actually used this run (after any restricted-model swaps), so
       // Mode B stays distinct where possible and persistence records the truth.
-      const usedModels = new Set<string>();
+      // Seed it with every model resolved for this mode so that a persona whose
+      // model is rejected *fast* (e.g. an instant 403) does not swap onto a
+      // model another persona is already mid-call with — the collision that
+      // otherwise collapses Mode B onto a single model (SPEC §5.2).
+      const usedModels = new Set<string>(
+        req.mode === RunMode.A_single
+          ? modelSingle
+            ? [modelSingle]
+            : []
+          : Object.values(assignment),
+      );
 
       // --- Advocate phase (4 in parallel) ---
       const advocates = this.personas.getAdvocates();

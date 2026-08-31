@@ -42,6 +42,23 @@ export class OpenRouterError extends Error {
 }
 
 /**
+ * A single call exceeded `CALL_TIMEOUT_MS` and was aborted. Distinct so the run
+ * pipeline can treat a hung model like an unavailable one and swap to another
+ * free model (SPEC §5.4) instead of failing the whole run — several free
+ * endpoints stream a body for minutes or never complete. Still an
+ * `OpenRouterError` so generic handlers keep working.
+ */
+export class ModelTimeoutError extends OpenRouterError {
+  constructor(
+    readonly model: string,
+    timeoutMs: number,
+  ) {
+    super(`OpenRouter call timed out after ${timeoutMs}ms`);
+    this.name = 'ModelTimeoutError';
+  }
+}
+
+/**
  * OpenRouter 403 for a specific model — e.g. a nominally "free" model that is
  * gated to approved agentic-harness apps ("only available on agentic
  * harnesses"), or otherwise not callable by this account. Not a generic

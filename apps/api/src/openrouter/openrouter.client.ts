@@ -2,11 +2,22 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   DataPolicyError,
+  ModelTimeoutError,
   ModelUnavailableError,
   OpenRouterError,
   OutOfCreditsError,
   RateLimitError,
 } from './openrouter.errors';
+
+/**
+ * A provider-side failure (the model's upstream returned an error), as opposed
+ * to an OpenRouter-level validation failure of our own request. OpenRouter wraps
+ * these as `{"error":{"message":"Provider returned error",...,"metadata":
+ * {"provider_name":...}}}`. Matches the 400 "invalid argument" case and the 5xx
+ * upstream-error case alike so the pipeline swaps models instead of failing.
+ */
+const PROVIDER_ERROR_RE =
+  /provider returned error|invalid[_ ]argument|provider_name|upstream error/i;
 import type {
   CallModelParams,
   CallModelResult,
@@ -58,34 +69,42 @@ export class OpenRouterClient {
       const started = Date.now();
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
-      let res: Response;
+      let status: number;
+      let json: OpenRouterChatResponse | undefined;
+      let errorText = '';
       try {
-        res = await fetch(`${baseUrl}/chat/completions`, {
+        const res = await fetch(`${baseUrl}/chat/completions`, {
           method: 'POST',
           headers,
           body,
           signal: controller.signal,
         });
+        status = res.status;
+        // The timeout must cover the BODY read too, not just the headers: free
+        // endpoints return headers in milliseconds and then stream a
+        // whitespace-padded body while the upstream generates — sometimes for
+        // minutes, sometimes never finishing. Reading the body inside the armed
+        // timer (cleared only in `finally`) is what actually enforces §5.4.
+        if (res.ok) {
+          json = (await res.json()) as OpenRouterChatResponse;
+        } else {
+          errorText = await res.text().catch(() => '');
+        }
       } catch (err) {
-        clearTimeout(timer);
         if (controller.signal.aborted) {
-          throw new OpenRouterError(
-            `OpenRouter call timed out after ${timeoutMs}ms`,
-          );
+          throw new ModelTimeoutError(params.model, timeoutMs);
         }
         throw err;
       } finally {
         clearTimeout(timer);
       }
 
-      if (res.ok) {
-        const json = (await res.json()) as OpenRouterChatResponse;
+      if (json) {
         return this.normalize(json, Date.now() - started);
       }
 
-      const errorText = await res.text().catch(() => '');
       // 429 — rate limited: back off and retry.
-      if (res.status === 429) {
+      if (status === 429) {
         lastRateLimit = errorText;
         if (attempt < MAX_ATTEMPTS) {
           await this.backoff(attempt);
@@ -94,33 +113,36 @@ export class OpenRouterClient {
         throw new RateLimitError();
       }
       // 402 — out of credits: abort, no retry.
-      if (res.status === 402) throw new OutOfCreditsError();
+      if (status === 402) throw new OutOfCreditsError();
       // 403 — this model is restricted/unavailable for the account (e.g. a free
       // model gated to approved agentic-harness apps). Typed so the pipeline can
       // skip it and try another free model instead of failing the run.
-      if (res.status === 403) throw new ModelUnavailableError(params.model);
-      // 400 — a provider-side "invalid argument" (e.g. a Google AI Studio free
-      // model rejecting the request: {"error":{"message":"Provider returned
-      // error",...,"metadata":{"provider_name":"Google AI Studio",...}}}). Treat
-      // it as model-unavailable so the pipeline swaps to another free model
-      // rather than failing the run (SPEC §5.4). An OpenRouter-level 400 (our own
-      // bad request, no provider metadata) still falls through to a hard error.
+      if (status === 403) throw new ModelUnavailableError(params.model);
+      // Provider-side failure (not our own bad request): a 400 "invalid
+      // argument" or an upstream 5xx that OpenRouter wraps with provider
+      // metadata (e.g. a Google AI Studio free model returning
+      // {"error":{"message":"Provider returned error",...,"metadata":
+      // {"provider_name":...}}}, or an "Upstream error from <provider>: Service
+      // temporarily overloaded"). Treat as model-unavailable so the pipeline
+      // swaps to another free model rather than failing the run (SPEC §5.4). An
+      // OpenRouter-level error with no provider fingerprint still falls through
+      // to a hard error so a real bug in our own request is not masked.
       if (
-        res.status === 400 &&
-        /provider returned error|invalid[_ ]argument|provider_name/i.test(errorText)
+        (status === 400 || (status >= 500 && status <= 599)) &&
+        PROVIDER_ERROR_RE.test(errorText)
       ) {
         throw new ModelUnavailableError(
           params.model,
-          `The model "${params.model}" was rejected by its provider (400 invalid argument) — skipping it and trying another free model.`,
+          `The model "${params.model}" was rejected by its provider (${status}) — skipping it and trying another free model.`,
         );
       }
       // 404 data-policy: the specific free-endpoint privacy error (SPEC §5.3).
-      if (res.status === 404 && /data policy|data_policy|endpoints/i.test(errorText)) {
+      if (status === 404 && /data policy|data_policy|endpoints/i.test(errorText)) {
         throw new DataPolicyError();
       }
       throw new OpenRouterError(
-        `OpenRouter request failed (${res.status}): ${errorText.slice(0, 300)}`,
-        res.status,
+        `OpenRouter request failed (${status}): ${errorText.slice(0, 300)}`,
+        status,
       );
     }
     // Unreachable, but keeps the type checker happy.

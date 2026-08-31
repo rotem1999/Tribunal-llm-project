@@ -23,6 +23,12 @@ let mode: 'ok' | 'empty' = 'ok';
 // When set, the fake OpenRouter returns a 403 "agentic harness only" for this
 // model id, so the pipeline must skip it and retry on another free model.
 let blockedModel: string | null = null;
+// When set, the given model id returns HTTP 200 with empty content — the
+// pipeline must treat that as unusable and swap to another free model.
+let emptyContentModel: string | null = null;
+// When set, the given model id returns a provider-side 5xx that the pipeline
+// must treat as model-unavailable and swap away from.
+let providerErrorModel: string | null = null;
 
 function startFakeOpenRouter(): Promise<http.Server> {
   const server = http.createServer((req, res) => {
@@ -53,6 +59,28 @@ function startFakeOpenRouter(): Promise<http.Server> {
               message: `${requestedModel} is only available on agentic harnesses`,
               code: 403,
             },
+          }),
+        );
+        return;
+      }
+      if (providerErrorModel && requestedModel === providerErrorModel) {
+        res.statusCode = 502;
+        res.end(
+          JSON.stringify({
+            error: {
+              message: 'Provider returned error',
+              code: 502,
+              metadata: { provider_name: 'Some Provider' },
+            },
+          }),
+        );
+        return;
+      }
+      if (emptyContentModel && requestedModel === emptyContentModel) {
+        res.end(
+          JSON.stringify({
+            choices: [{ message: { content: '' } }],
+            usage: { prompt_tokens: 5, completion_tokens: 0, total_tokens: 5, cost: 0 },
           }),
         );
         return;
@@ -326,6 +354,61 @@ describe('Tribunal API (e2e)', () => {
         .expect(200);
       expect(res.body.status).toBe('completed');
       expect(res.body.speeches).toHaveLength(4);
+      expect(res.body.verdicts).toHaveLength(3);
+      const models = [...res.body.speeches, ...res.body.verdicts].map(
+        (x: { model: string }) => x.model,
+      );
+      expect(models).not.toContain('free-1:free');
+    });
+  });
+
+  describe('unusable-response fallback', () => {
+    let app4: INestApplication;
+    let token4: string;
+
+    afterEach(async () => {
+      await app4?.close();
+      emptyContentModel = null;
+      providerErrorModel = null;
+    });
+
+    it('swaps away from a model that returns an empty 200 body and completes', async () => {
+      emptyContentModel = 'free-1:free'; // the top free model Mode A auto-picks
+      app4 = await bootstrap();
+      token4 = (await login(app4, 'admin', 'pw')).body.accessToken;
+      const created = await request(app4.getHttpServer())
+        .post('/api/runs')
+        .set({ Authorization: `Bearer ${token4}` })
+        .send({ mode: 'A_single' })
+        .expect(201);
+      await waitForRun(app4, created.body.runId, token4);
+      const res = await request(app4.getHttpServer())
+        .get(`/api/runs/${created.body.runId}`)
+        .set({ Authorization: `Bearer ${token4}` })
+        .expect(200);
+      expect(res.body.status).toBe('completed');
+      expect(res.body.speeches).toHaveLength(4);
+      const models = [...res.body.speeches, ...res.body.verdicts].map(
+        (x: { model: string }) => x.model,
+      );
+      expect(models).not.toContain('free-1:free');
+    });
+
+    it('swaps away from a model that returns a provider-side 5xx and completes', async () => {
+      providerErrorModel = 'free-1:free';
+      app4 = await bootstrap();
+      token4 = (await login(app4, 'admin', 'pw')).body.accessToken;
+      const created = await request(app4.getHttpServer())
+        .post('/api/runs')
+        .set({ Authorization: `Bearer ${token4}` })
+        .send({ mode: 'A_single' })
+        .expect(201);
+      await waitForRun(app4, created.body.runId, token4);
+      const res = await request(app4.getHttpServer())
+        .get(`/api/runs/${created.body.runId}`)
+        .set({ Authorization: `Bearer ${token4}` })
+        .expect(200);
+      expect(res.body.status).toBe('completed');
       expect(res.body.verdicts).toHaveLength(3);
       const models = [...res.body.speeches, ...res.body.verdicts].map(
         (x: { model: string }) => x.model,
