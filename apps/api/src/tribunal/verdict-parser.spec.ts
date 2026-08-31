@@ -78,6 +78,37 @@ describe('parseVerdict', () => {
     expect(asParsed(parseVerdict(raw)).decision).toBe(Decision.not_justified);
   });
 
+  it('takes the LAST confidence when a value is restated', () => {
+    const raw = [
+      'On first pass I felt CONFIDENCE: 30',
+      'OPINION: but the record is clear.',
+      'CONFIDENCE: 88',
+      'DECISION: justified',
+    ].join('\n');
+    expect(asParsed(parseVerdict(raw)).confidence).toBe(88);
+  });
+
+  it('ignores a verdict rehearsed inside a <think> block, using the real one after it', () => {
+    const raw = [
+      '<think>',
+      'Let me consider. DECISION: justified, CONFIDENCE: 95 seems right at first.',
+      'But actually the alternatives were not exhausted.',
+      '</think>',
+      'OPINION: The lesser means were never attempted.',
+      'CONFIDENCE: 40',
+      'DECISION: not_justified',
+    ].join('\n');
+    const parsed = asParsed(parseVerdict(raw));
+    expect(parsed.decision).toBe(Decision.not_justified);
+    expect(parsed.confidence).toBe(40);
+    expect(parsed.reasoning).toBe('The lesser means were never attempted.');
+  });
+
+  it('needsReask when the ONLY block is inside a <think> block (no real answer)', () => {
+    const raw = '<think>DECISION: justified\nCONFIDENCE: 70</think>';
+    expect(isNeedsReask(parseVerdict(raw))).toBe(true);
+  });
+
   it('clamps confidence above 100 down to 100', () => {
     expect(asParsed(parseVerdict('DECISION: justified\nCONFIDENCE: 250')).confidence).toBe(100);
   });

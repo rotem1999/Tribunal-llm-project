@@ -18,6 +18,15 @@ import {
  */
 const PROVIDER_ERROR_RE =
   /provider returned error|invalid[_ ]argument|provider_name|upstream error/i;
+
+/**
+ * A model that will not honor `reasoning: { enabled: false }` — it hard-rejects
+ * the request ("Reasoning is mandatory for this endpoint and cannot be
+ * disabled"). Exactly the kind that floods the response with chain-of-thought,
+ * so it is skipped like any other unusable model rather than failing the run.
+ */
+const REASONING_REQUIRED_RE =
+  /reasoning is (?:mandatory|required)|cannot be disabled/i;
 import type {
   CallModelParams,
   CallModelResult,
@@ -37,6 +46,14 @@ export class OpenRouterClient {
 
   constructor(private readonly config: ConfigService) {}
 
+  /** Whether to send `reasoning: { enabled: false }` (default true; §5.6). */
+  private reasoningDisabled(): boolean {
+    // `@nestjs/config` returns the validated value (a real boolean); tests and
+    // raw env may hand back the string "false".
+    const v = this.config.get<boolean | string>('DISABLE_MODEL_REASONING', true);
+    return v !== false && v !== 'false';
+  }
+
   async callModel(params: CallModelParams): Promise<CallModelResult> {
     const baseUrl = this.config
       .get<string>('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1')
@@ -52,7 +69,7 @@ export class OpenRouterClient {
     const referer = this.config.get<string>('OPENROUTER_APP_URL');
     if (referer) headers['HTTP-Referer'] = referer;
 
-    const body = JSON.stringify({
+    const payload: Record<string, unknown> = {
       model: params.model,
       messages: [
         { role: 'system', content: params.systemPrompt },
@@ -62,7 +79,17 @@ export class OpenRouterClient {
       max_tokens: params.maxTokens,
       // Ask OpenRouter to include usage accounting (usage.cost) in the response.
       usage: { include: true },
-    });
+    };
+    // Disable model "reasoning" (default). Several free models otherwise emit
+    // their whole chain-of-thought as the message content and burn the entire
+    // token budget before ever producing the verdict block (§5.6) — turning a
+    // clean 3-line answer into multi-KB of gibberish. Off → a direct answer. A
+    // model that *requires* reasoning rejects this with a 400 and is swapped
+    // (see below). Set DISABLE_MODEL_REASONING=false to opt back in.
+    if (this.reasoningDisabled()) {
+      payload.reasoning = { enabled: false };
+    }
+    const body = JSON.stringify(payload);
 
     let lastRateLimit: unknown;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -114,6 +141,14 @@ export class OpenRouterClient {
       }
       // 402 — out of credits: abort, no retry.
       if (status === 402) throw new OutOfCreditsError();
+      // 400 — this model refuses to run with reasoning disabled. Skip it and
+      // swap to a model that can return the plain verdict block (§5.6).
+      if (status === 400 && REASONING_REQUIRED_RE.test(errorText)) {
+        throw new ModelUnavailableError(
+          params.model,
+          `The model "${params.model}" requires reasoning and won't return a plain verdict — skipping it and trying another free model.`,
+        );
+      }
       // 403 — this model is restricted/unavailable for the account (e.g. a free
       // model gated to approved agentic-harness apps). Typed so the pipeline can
       // skip it and try another free model instead of failing the run.
