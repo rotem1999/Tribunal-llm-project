@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { LoggingService } from '../logging/logging.service';
 import {
   DataPolicyError,
   ModelTimeoutError,
@@ -44,7 +45,12 @@ const MAX_ATTEMPTS = 4;
 @Injectable()
 export class OpenRouterClient {
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    // Optional so the client can still be constructed directly (unit tests) with
+    // no logging wired; in the app the @Global LoggingModule always provides it.
+    @Optional() private readonly logging?: LoggingService,
+  ) {}
 
   /** Whether to send `reasoning: { enabled: false }` (default true; §5.6). */
   private reasoningDisabled(): boolean {
@@ -118,17 +124,60 @@ export class OpenRouterClient {
           errorText = await res.text().catch(() => '');
         }
       } catch (err) {
-        if (controller.signal.aborted) {
-          throw new ModelTimeoutError(params.model, timeoutMs);
-        }
-        throw err;
+        // Log the attempt before rethrowing so a hung/aborted call is still
+        // visible in the forensic log (SPEC §5.7). Timeouts are exactly the
+        // failures the log is meant to surface.
+        const timedOut = controller.signal.aborted;
+        const error = timedOut
+          ? new ModelTimeoutError(params.model, timeoutMs)
+          : err;
+        this.logging?.logOpenRouterCall({
+          model: params.model,
+          attempt,
+          status: null,
+          latencyMs: Date.now() - started,
+          request: payload,
+          error,
+          runId: params.runId ?? null,
+          personaKey: params.personaKey ?? null,
+          message: timedOut ? 'call timed out' : 'network error',
+        });
+        throw error;
       } finally {
         clearTimeout(timer);
       }
 
       if (json) {
-        return this.normalize(json, Date.now() - started);
+        const result = this.normalize(json, Date.now() - started);
+        this.logging?.logOpenRouterCall({
+          model: params.model,
+          attempt,
+          status,
+          latencyMs: result.latencyMs,
+          request: payload,
+          response: json,
+          usage: result.usage,
+          runId: params.runId ?? null,
+          personaKey: params.personaKey ?? null,
+          message: 'ok',
+        });
+        return result;
       }
+
+      // Non-2xx: log the raw status + error body so the reason a provider
+      // rejected the call is recoverable after the fact (SPEC §5.7). The typed
+      // error mapping below is not re-logged — this single entry carries the body.
+      this.logging?.logOpenRouterCall({
+        model: params.model,
+        attempt,
+        status,
+        latencyMs: Date.now() - started,
+        request: payload,
+        response: errorText,
+        runId: params.runId ?? null,
+        personaKey: params.personaKey ?? null,
+        message: `HTTP ${status}`,
+      });
 
       // 429 — rate limited: back off and retry.
       if (status === 429) {

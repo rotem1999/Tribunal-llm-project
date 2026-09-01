@@ -9,6 +9,7 @@ import {
 } from '@tribunal/shared-types';
 import { ChargeSheetsService } from '../chargesheets/chargesheets.service';
 import { EconomyService } from '../economy/economy.service';
+import { LoggingService } from '../logging/logging.service';
 import { OpenRouterClient } from '../openrouter/openrouter.client';
 import {
   ModelTimeoutError,
@@ -60,6 +61,7 @@ export class TribunalService {
     @InjectRepository(Verdict) private readonly verdicts: Repository<Verdict>,
     private readonly config: ConfigService,
     private readonly economy: EconomyService,
+    private readonly logging: LoggingService,
   ) {}
 
   /** Max times a single persona call will swap to another free model. */
@@ -116,6 +118,13 @@ export class TribunalService {
         this.logger.warn(
           `Model "${model}" is unusable (${(err as Error).name}) — retrying persona with "${next}".`,
         );
+        this.logging.logSwap({
+          runId: params.runId ?? 'unknown',
+          personaKey: params.personaKey ?? 'unknown',
+          fromModel: model,
+          toModel: next,
+          reason: (err as Error).name,
+        });
         model = next;
       }
     }
@@ -152,6 +161,7 @@ export class TribunalService {
   async executeRun(run: Run, req: CreateRunRequest): Promise<Run> {
     let speeches: Speech[] = [];
     let verdicts: Verdict[] = [];
+    this.logging.logRunLifecycle({ runId: run.id, status: 'running', mode: run.mode });
     try {
       const ceiling = Number(run.costCeilingUsd);
       const maxTokens = Number(this.config.get<string>('MODEL_MAX_TOKENS', '1024'));
@@ -192,7 +202,14 @@ export class TribunalService {
         advocates.map(async (adv) => {
           const { system, user } = buildAdvocatePrompt(adv, run.chargeSheetSnapshot);
           const { res, model } = await this.callPersona(
-            { systemPrompt: system, userPrompt: user, temperature: advTemp, maxTokens },
+            {
+              systemPrompt: system,
+              userPrompt: user,
+              temperature: advTemp,
+              maxTokens,
+              runId: run.id,
+              personaKey: adv.key,
+            },
             modelFor(adv.key),
             usedModels,
           );
@@ -234,7 +251,14 @@ export class TribunalService {
           const { system, user } = buildJudgePrompt(judge, run.chargeSheetSnapshot, ordered);
 
           const { res, model } = await this.callPersona(
-            { systemPrompt: system, userPrompt: user, temperature: judgeTemp, maxTokens },
+            {
+              systemPrompt: system,
+              userPrompt: user,
+              temperature: judgeTemp,
+              maxTokens,
+              runId: run.id,
+              personaKey: judge.key,
+            },
             modelFor(judge.key),
             usedModels,
           );
@@ -250,6 +274,8 @@ export class TribunalService {
               userPrompt: `${user}\n\nReply with ONLY these three lines:\nOPINION: <1-3 sentences>\nCONFIDENCE: <integer 0-100>\nDECISION: justified|not_justified`,
               temperature: judgeTemp,
               maxTokens,
+              runId: run.id,
+              personaKey: judge.key,
             });
             raw = `${res.content}\n---REASK---\n${reask.content}`;
             usage = mergeUsage(res.usage, reask.usage);
@@ -301,10 +327,22 @@ export class TribunalService {
       this.logger.log(
         `Run ${run.id} completed (${run.mode}) — tally ${JSON.stringify(saved.verdictTally)}.`,
       );
+      this.logging.logRunLifecycle({
+        runId: run.id,
+        status: 'completed',
+        mode: run.mode,
+        message: `run completed (${run.mode}) — tally ${JSON.stringify(saved.verdictTally)}`,
+      });
       return saved;
     } catch (err) {
       const message = (err as Error)?.message ?? 'Run failed.';
       this.logger.error(`Run ${run.id} failed: ${message}`);
+      this.logging.logRunLifecycle({
+        runId: run.id,
+        status: 'failed',
+        mode: run.mode,
+        error: err,
+      });
       run.status = RunStatus.failed;
       run.error = message;
       run.completedAt = new Date();
@@ -343,6 +381,12 @@ export class TribunalService {
     const saved = await this.runs.save(run);
     // Persist partial economy on abort too (SPEC §5.5 step 3).
     await this.economy.writeRun(saved, speeches, verdicts);
+    this.logging.logRunLifecycle({
+      runId: run.id,
+      status: 'aborted_over_budget',
+      mode: run.mode,
+      message: `run aborted_over_budget at $${totalCost}`,
+    });
     return saved;
   }
 }

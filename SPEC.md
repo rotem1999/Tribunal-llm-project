@@ -423,6 +423,83 @@ absent but `DECISION` parsed). If `DECISION` or `CONFIDENCE` is missing, do a si
 mark the verdict `decision` via a conservative fallback (`justified` = benefit of the doubt to the
 accused) with `confidence: 0`, and flag the run in `error`. Always keep `rawResponse`.
 
+### 5.7 Diagnostic logging (`logging` module — backend observability)
+
+**Goal:** after the fact, be able to *see why an OpenRouter call or a run failed* without re-running
+it. Every OpenRouter failure is already typed (§5.4), but today it only reaches the console
+(`Logger.warn/error` in the `tribunal` swap loop and `AllExceptionsFilter`), so it is lost the moment
+the terminal scrolls. This clause adds a durable, file-based diagnostic log **alongside** the existing
+NestJS `Logger` — the human-readable console lines stay; this is an additional structured sink, not a
+replacement.
+
+**Sink — JSONL file, no DB table (owner decision, 2026-09-01).** One append-only structured log,
+rotated daily, at `apps/api/data/logs/app-YYYY-MM-DD.jsonl` (directory overridable via `LOG_DIR`;
+lives under the already-gitignored `data/`, §3.1). One JSON object per line. Daily rotation bounds
+file size given the full-payload entries below. **No `LogEntry` DB entity and no query API in v1** —
+logs are read straight off disk (tail / download / grep). A DB-backed log table, a JWT-guarded
+`GET /logs` endpoint, and a web Diagnostics page are explicitly documented **future extensions, out of
+v1 scope** (mirrors how charge-sheet editing is built server-side but not surfaced in the v1 UI).
+
+**What is captured (owner decision): OpenRouter calls + run lifecycle + errors.**
+- **Every OpenRouter chat call — success *and* failure** — one entry carrying `model`, `personaKey`,
+  `runId`, HTTP `status`, `latencyMs`, token `usage`, the swap `attempt` number, and (on failure) the
+  typed error name (§5.4: `DataPolicyError`, `OutOfCreditsError`, `RateLimitError`,
+  `ModelUnavailableError`, `ModelTimeoutError`, `OpenRouterError`).
+- **Run lifecycle** — `running` → `completed` / `failed` / `aborted_over_budget`, plus each **model
+  swap** event (which model was skipped, why, and which free model replaced it — §5.2/§5.4).
+- **Unhandled backend errors** — whatever reaches `AllExceptionsFilter` (§12), with stack.
+- **Not captured:** an inbound access log of every HTTP request (out of scope — the driver is
+  OpenRouter/run debugging, not request tracing).
+
+**Entry detail (owner decision): full request + response payloads.** For each OpenRouter call the
+entry stores the **full request payload** (the `messages` incl. system prompt + charge-sheet/speeches,
+`temperature`, `max_tokens`, the `reasoning` flag) and the **full response body** (or the raw error
+body on a non-2xx). This is acceptable because all case content is fictional/demo (D1). The payloads
+are duplicated from the DB snapshots on purpose: the log is a **standalone forensic record** that
+survives even when a call is never persisted as a `Speech`/`Verdict` — e.g. an empty-200, a timeout,
+or a provider rejection that gets swapped away (§5.4).
+
+**Redaction is non-negotiable even with "full payloads."** The log must **never** contain secrets:
+the `OPENROUTER_API_KEY` / outgoing `Authorization` header, the `JWT_SECRET` or any bearer token, or
+`SEED_PASSWORD`. Record the request *body* and only safe headers (`X-Title`, `HTTP-Referer`, `model`);
+never the `Authorization` header. (Prompts and speeches are not secret per D1; the items above always
+are.)
+
+**Entry schema** (one JSON object per line; fields not relevant to an entry's `event` are omitted/null):
+```json
+{
+  "ts": "2026-09-01T12:00:00.000Z",
+  "level": "info | warn | error",
+  "event": "openrouter.call | run.lifecycle | run.swap | error.unhandled",
+  "runId": "… | null",
+  "personaKey": "support_1 | judge_2 | null",
+  "model": "… | null",
+  "status": 200,
+  "latencyMs": 1234,
+  "attempt": 1,
+  "usage": { "promptTokens": 0, "completionTokens": 0, "totalTokens": 0, "reasoningTokens": null, "costUsd": 0 },
+  "error": { "name": "ModelTimeoutError", "message": "…", "stack": "…" },
+  "request": { "…": "full OpenRouter request payload, secrets stripped (openrouter.call)" },
+  "response": { "…": "full response body, or raw error text on non-2xx (openrouter.call)" },
+  "message": "human-readable one-liner"
+}
+```
+
+**Writes are best-effort and non-blocking.** A logging failure (disk full, unwritable path) must
+**never** break or fail a run — catch it and fall back to the console `Logger`. The writer stays
+decoupled from the run pipeline (a thin injectable service the `openrouter` client, the `tribunal`
+swap loop, and `AllExceptionsFilter` call).
+
+**Config (adds to §9):** `LOG_DIR` (default `apps/api/data/logs`, resolved from the workspace root),
+`LOG_TO_FILE` (default `true`; set `false` for console-only, e.g. under test), and `LOG_LEVEL`
+(default `info`) which gates which entries are written.
+
+**Testing (extends §14.2).** Unit-test the file writer against a temp dir: assert the JSONL line
+shape, that a whole day's entries append to the correct `app-YYYY-MM-DD.jsonl`, that **secrets
+(API key / `Authorization` / JWT / password) never appear** in a written line, and that a writer throw
+is swallowed so the run continues. Tests default to `LOG_TO_FILE=false` so they never touch disk unless
+exercising the writer itself. As always, OpenRouter is mocked (§14.1) — never assert on model prose.
+
 ---
 
 ## 6. Token economy (the tracking requirement)
@@ -550,6 +627,9 @@ All via `@nestjs/config` with schema validation; document in `.env.example`.
 | `MODEL_MAX_TOKENS` | no | `1024` | per call output cap |
 | `CALL_TIMEOUT_MS` | no | `90000` | per-call timeout; covers the response-body read, not just headers (§5.4) |
 | `DISABLE_MODEL_REASONING` | no | `true` | send `reasoning:{enabled:false}` so models return the plain verdict block instead of dumping chain-of-thought (§5.4/§5.6) |
+| `LOG_DIR` | no | `apps/api/data/logs` | directory for the diagnostic JSONL log (§5.7), resolved from the workspace root |
+| `LOG_TO_FILE` | no | `true` | write the diagnostic log to file; `false` = console only (e.g. under test) (§5.7) |
+| `LOG_LEVEL` | no | `info` | minimum level written to the diagnostic log: `info`/`warn`/`error` (§5.7) |
 | `DATABASE_URL` | yes | — | Postgres connection |
 | `JWT_SECRET` | yes | — | |
 | `JWT_EXPIRES_IN` | no | `1d` | |
