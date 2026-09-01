@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { CreateChargeSheets } from '../migrations/1787000001000-CreateChargeSheets';
 import { CreateRuns } from '../migrations/1787000002000-CreateRuns';
 import { AddRunErrorCode } from '../migrations/1787000003000-AddRunErrorCode';
+import { AddVerdictTruncated } from '../migrations/1787000004000-AddVerdictTruncated';
 import { CreateUsers } from '../migrations/1787000000000-CreateUsers';
 
 /**
@@ -22,7 +23,7 @@ import { CreateUsers } from '../migrations/1787000000000-CreateUsers';
         autoLoadEntities: true,
         synchronize: false,
         migrationsRun: true,
-        migrations: [CreateUsers, CreateChargeSheets, CreateRuns, AddRunErrorCode],
+        migrations: [CreateUsers, CreateChargeSheets, CreateRuns, AddRunErrorCode, AddVerdictTruncated],
       }),
     }),
   ],

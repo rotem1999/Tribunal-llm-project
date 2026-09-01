@@ -49,6 +49,7 @@ export function makeVerdict(overrides: Partial<Verdict> = {}): Verdict {
     decision: Decision.justified,
     confidence: 72,
     reasoning: 'On balance the conduct was justified because ...',
+    truncated: false,
     promptTokens: 200,
     completionTokens: 80,
     totalTokens: 280,

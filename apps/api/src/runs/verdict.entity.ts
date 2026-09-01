@@ -40,6 +40,14 @@ export class Verdict {
   @Column({ name: 'raw_response', type: 'text' })
   rawResponse!: string;
 
+  /**
+   * The opinion could not be read — reply cut off (`finish_reason=length`),
+   * failed re-ask fallback, or empty (SPEC §5.6). Decision/confidence still
+   * stand; the card shows a recess placeholder instead of the opinion (§11).
+   */
+  @Column({ type: 'boolean', default: false })
+  truncated!: boolean;
+
   /** Order of speeches this judge saw (audit). */
   @Column({ name: 'speech_order_shown', type: 'jsonb', nullable: true })
   speechOrderShown!: string[] | null;

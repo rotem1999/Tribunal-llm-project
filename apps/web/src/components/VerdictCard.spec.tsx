@@ -42,4 +42,42 @@ describe('VerdictCard', () => {
     expect(screen.queryByText('justified')).not.toBeInTheDocument();
     expect(screen.getByText('confidence 40')).toBeInTheDocument();
   });
+
+  it('renders the reasoning text under a "Reasoning" section label for a non-truncated verdict', () => {
+    const verdict = makeVerdict({
+      truncated: false,
+      reasoning: 'The conduct was proportionate to the threat.',
+    });
+
+    render(<VerdictCard verdict={verdict} />);
+
+    expect(screen.getByText('Reasoning')).toBeInTheDocument();
+    expect(
+      screen.getByText('The conduct was proportionate to the threat.'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows a recess placeholder (not the reasoning) for a truncated verdict, keeping the decision badge and confidence', () => {
+    const verdict = makeVerdict({
+      truncated: true,
+      decision: Decision.not_justified,
+      confidence: 55,
+      reasoning: 'SHOULD NOT SHOW — this opinion was cut off.',
+    });
+
+    render(<VerdictCard verdict={verdict} />);
+
+    // Recess placeholder replaces the opinion.
+    expect(screen.getByText(/recess/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/stepped out for a brief recess/i),
+    ).toBeInTheDocument();
+    // The raw/garbled reasoning is NOT shown.
+    expect(
+      screen.queryByText('SHOULD NOT SHOW — this opinion was cut off.'),
+    ).not.toBeInTheDocument();
+    // Decision badge + confidence still stand.
+    expect(screen.getByText('not justified')).toBeInTheDocument();
+    expect(screen.getByText('confidence 55')).toBeInTheDocument();
+  });
 });
