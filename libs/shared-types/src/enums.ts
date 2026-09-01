@@ -37,3 +37,33 @@ export enum PersonaRole {
   advocate = 'advocate',
   judge = 'judge',
 }
+
+/**
+ * Stable, machine-readable failure category (SPEC §12.1). The backend classifies
+ * every error into exactly one of these; the frontend maps the code to plain,
+ * user-safe copy. The raw cause is never sent to the browser — it lives only in
+ * the §5.7 diagnostic log. `NETWORK` is assigned client-side when a request never
+ * gets a response; the rest come from the API `{ statusCode, code, message }` body.
+ */
+export enum ErrorCode {
+  /** Expired/missing JWT (401). */
+  UNAUTHORIZED = 'UNAUTHORIZED',
+  /** Bad request body / validation (400). */
+  INVALID_INPUT = 'INVALID_INPUT',
+  /** No free models for the account — the §5.3 data-policy 404. */
+  NO_FREE_MODELS = 'NO_FREE_MODELS',
+  /** OpenRouter account out of credits (402). */
+  OUT_OF_CREDITS = 'OUT_OF_CREDITS',
+  /** Rate limited beyond the retry budget (429). */
+  RATE_LIMITED = 'RATE_LIMITED',
+  /** No free model could be reached for the run after swaps (422). */
+  MODEL_UNAVAILABLE = 'MODEL_UNAVAILABLE',
+  /** Other upstream/provider failure (502). */
+  PROVIDER_ERROR = 'PROVIDER_ERROR',
+  /** A completed run whose verdict parsing fell back (§5.6). Not a failure. */
+  VERDICT_UNREADABLE = 'VERDICT_UNREADABLE',
+  /** Uncategorized server error (500). */
+  INTERNAL = 'INTERNAL',
+  /** Client-side only: the API was unreachable (no response). */
+  NETWORK = 'NETWORK',
+}

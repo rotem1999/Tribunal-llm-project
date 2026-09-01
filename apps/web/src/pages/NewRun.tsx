@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  ErrorCode,
   RunMode,
   type ChargeSheet,
   type FreeModel,
 } from '@tribunal/shared-types';
 import { getActiveChargeSheet } from '../api/chargeSheet';
-import { ApiError } from '../api/client';
+import { codeOf } from '../api/errors';
 import { getFreeModels } from '../api/models';
 import { createRun } from '../api/runs';
+import { ErrorNotice } from '../components/ErrorNotice';
 import { ModeToggle } from '../components/ModeToggle';
 import { Button, Card, Eyebrow } from '../components/ui';
 
@@ -21,7 +23,7 @@ export function NewRun() {
   const [models, setModels] = useState<FreeModel[]>([]);
   const [modelSingle, setModelSingle] = useState('');
   const [running, setRunning] = useState(false);
-  const [error, setError] = useState('');
+  const [errorCode, setErrorCode] = useState<ErrorCode | null>(null);
 
   useEffect(() => {
     getActiveChargeSheet().then(setSheet).catch(() => undefined);
@@ -35,7 +37,7 @@ export function NewRun() {
 
   async function run() {
     setRunning(true);
-    setError('');
+    setErrorCode(null);
     try {
       const { runId } = await createRun({
         mode,
@@ -44,7 +46,7 @@ export function NewRun() {
       });
       navigate(`/runs/${runId}`);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Run failed.');
+      setErrorCode(codeOf(err));
       setRunning(false);
     }
   }
@@ -104,11 +106,7 @@ export function NewRun() {
         )}
       </section>
 
-      {error && (
-        <p className="text-sm text-not-justified" role="alert">
-          {error}
-        </p>
-      )}
+      {errorCode && <ErrorNotice code={errorCode} />}
 
       <div>
         <Button onClick={run} disabled={running}>
