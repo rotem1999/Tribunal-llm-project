@@ -1,16 +1,18 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
+  ErrorCode,
   RunStatus,
   Side,
   type PersonaInfo,
   type RunDetail,
   type RunProgress,
 } from '@tribunal/shared-types';
-import { ApiError } from '../api/client';
+import { codeOf } from '../api/errors';
 import { getPersonas } from '../api/personas';
 import { getRun, getRunProgress } from '../api/runs';
 import { EconomyPanel } from '../components/EconomyPanel';
+import { ErrorNotice } from '../components/ErrorNotice';
 import { SpeechCard } from '../components/SpeechCard';
 import { TribunalCircle } from '../components/TribunalCircle';
 import { VerdictCard } from '../components/VerdictCard';
@@ -69,7 +71,7 @@ export function RunResult() {
   const [personas, setPersonas] = useState<PersonaInfo[]>([]);
   const [progress, setProgress] = useState<RunProgress | null>(null);
   const [run, setRun] = useState<RunDetail | null>(null);
-  const [error, setError] = useState('');
+  const [loadErrorCode, setLoadErrorCode] = useState<ErrorCode | null>(null);
   const [tab, setTab] = useState<Tab>('verdict');
   // The 3 judge cards share one open/closed state (SPEC §11): all readable or
   // all cut — there is no per-judge toggle.
@@ -97,7 +99,7 @@ export function RunResult() {
         }
       } catch (e) {
         if (!active) return;
-        setError(e instanceof ApiError ? e.message : 'Could not load run.');
+        setLoadErrorCode(codeOf(e));
         return;
       }
       timer = setTimeout(poll, 1500);
@@ -109,7 +111,8 @@ export function RunResult() {
     };
   }, [id]);
 
-  if (error && !run) return <p className="text-sm text-not-justified">{error}</p>;
+  if (loadErrorCode && !run)
+    return <ErrorNotice code={loadErrorCode} runId={id} />;
 
   // --- Still running: live animation (UX rule 3: immediate, live feedback) ---
   if (!run) {
@@ -143,14 +146,19 @@ export function RunResult() {
 
       {run.status === RunStatus.aborted_over_budget && (
         <p className="text-sm text-not-justified">
-          Run aborted over budget — partial results shown.
+          This run stopped early to stay within budget — partial results are shown.
         </p>
       )}
       {run.status === RunStatus.failed && (
-        <p className="text-sm text-not-justified">
-          The run could not complete{run.error ? `: ${run.error}` : '.'}
-        </p>
+        <ErrorNotice code={run.errorCode} runId={run.id} />
       )}
+      {run.status === RunStatus.completed &&
+        run.errorCode === ErrorCode.VERDICT_UNREADABLE && (
+          <ErrorNotice
+            code={run.errorCode}
+            className="text-sm text-neutral-400"
+          />
+        )}
 
       {tab === 'verdict' ? (
         <>

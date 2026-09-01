@@ -2,7 +2,7 @@ import { screen, within } from '@testing-library/react';
 import { Route, Routes } from 'react-router-dom';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
-import { Decision, RunStatus, Side } from '@tribunal/shared-types';
+import { Decision, ErrorCode, RunStatus, Side } from '@tribunal/shared-types';
 import { RunResult } from './RunResult';
 import { API_BASE, server } from '../test/server';
 import {
@@ -139,29 +139,33 @@ describe('RunResult', () => {
     runHandlers(makeRunDetail({ status: RunStatus.aborted_over_budget }));
     renderRun();
     expect(
-      await screen.findByText(/Run aborted over budget/i),
+      await screen.findByText(/stay within budget/i),
     ).toBeInTheDocument();
   });
 
-  it('shows a failure banner (with the error) for a failed run', async () => {
+  it('shows the friendly copy (keyed by errorCode) for a failed run, never the raw error', async () => {
+    const rawCause = 'ModelUnavailableError: gated/model 403 upstream boom';
     runHandlers(
       makeRunDetail({
         status: RunStatus.failed,
-        error: 'No free models are available for your OpenRouter account.',
+        errorCode: ErrorCode.MODEL_UNAVAILABLE,
+        // Even if a raw string leaks onto run.error, the UI must ignore it and
+        // render only the code-keyed friendly copy (SPEC §12.1).
+        error: rawCause,
         speeches: [],
         verdicts: [],
       }),
     );
     renderRun();
     expect(
-      await screen.findByText(/The run could not complete/i),
+      await screen.findByText(/couldn't reach a working AI model/i),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/No free models are available/i),
-    ).toBeInTheDocument();
+    // The raw cause is never shown on screen.
+    expect(screen.queryByText(rawCause)).not.toBeInTheDocument();
+    expect(screen.queryByText(/upstream boom/i)).not.toBeInTheDocument();
   });
 
-  it('surfaces an API error message when the run cannot be loaded', async () => {
+  it('surfaces the friendly copy (not the raw message) when the run cannot be loaded', async () => {
     server.use(
       http.get(`${API_BASE}/personas`, () => HttpResponse.json(makePersonas())),
       http.get(`${API_BASE}/runs/missing/progress`, () =>
@@ -169,7 +173,13 @@ describe('RunResult', () => {
       ),
     );
     renderRun('missing');
-    expect(await screen.findByText('Run not found.')).toBeInTheDocument();
+    // A load failure with no classified code falls back to the INTERNAL copy,
+    // with a quotable reference (run id + code) — never the raw body message.
+    expect(
+      await screen.findByText('Something went wrong. Please try again.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Reference:/)).toHaveTextContent('missing');
+    expect(screen.queryByText('Run not found.')).not.toBeInTheDocument();
   });
 
   it('shows the live tribunal circle while a run is still in progress', async () => {

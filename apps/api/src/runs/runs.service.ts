@@ -62,7 +62,13 @@ export class RunsService {
       : speechRows.length >= 4
         ? 'judges'
         : 'advocates';
-    return { status: run.status, phase, completedPersonaKeys, error: run.error };
+    return {
+      status: run.status,
+      phase,
+      completedPersonaKeys,
+      error: run.error,
+      errorCode: run.errorCode,
+    };
   }
 
   async list(limit = 20, offset = 0): Promise<RunSummary[]> {
@@ -78,6 +84,7 @@ export class RunsService {
       status: r.status,
       verdictTally: r.verdictTally,
       totalCostUsd: Number(r.totalCostUsd),
+      errorCode: r.errorCode,
     }));
   }
 
@@ -107,6 +114,7 @@ export class RunsService {
       createdAt: run.createdAt.toISOString(),
       completedAt: run.completedAt ? run.completedAt.toISOString() : null,
       error: run.error,
+      errorCode: run.errorCode,
     };
   }
 }

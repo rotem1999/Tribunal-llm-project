@@ -1,5 +1,6 @@
 import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ErrorCode } from '@tribunal/shared-types';
 import { api, ApiError, configureClient } from './client';
 import { API_BASE, server } from '../test/server';
 
@@ -49,7 +50,7 @@ describe('api client', () => {
     expect(authHeader).toBeNull();
   });
 
-  it('on 401 calls the unauthorized handler and throws ApiError(401)', async () => {
+  it('on 401 calls the unauthorized handler and throws ApiError(401) with code UNAUTHORIZED', async () => {
     const onUnauthorized = vi.fn();
     configureClient(() => 'jwt-123', onUnauthorized);
     server.use(
@@ -62,7 +63,60 @@ describe('api client', () => {
 
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(401);
+    expect(err.code).toBe(ErrorCode.UNAUTHORIZED);
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries the ErrorCode from a non-ok { statusCode, code, message } body', async () => {
+    const onUnauthorized = vi.fn();
+    configureClient(() => null, onUnauthorized);
+    server.use(
+      http.post(`${API_BASE}/runs`, () =>
+        HttpResponse.json(
+          {
+            statusCode: 429,
+            code: ErrorCode.RATE_LIMITED,
+            message: 'The AI service is busy right now. Please wait a moment and try again.',
+          },
+          { status: 429 },
+        ),
+      ),
+    );
+
+    const err = await api('/runs', { method: 'POST' }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(429);
+    expect(err.code).toBe(ErrorCode.RATE_LIMITED);
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  it('defaults to code INTERNAL when a non-ok body carries no code', async () => {
+    configureClient(() => null, () => undefined);
+    server.use(
+      http.get(`${API_BASE}/boom`, () =>
+        HttpResponse.json({ message: 'oops' }, { status: 500 }),
+      ),
+    );
+
+    const err = await api('/boom').catch((e) => e);
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(500);
+    expect(err.code).toBe(ErrorCode.INTERNAL);
+  });
+
+  it('classifies a fetch rejection (no response) as status 0 + code NETWORK', async () => {
+    configureClient(() => null, () => undefined);
+    server.use(
+      http.get(`${API_BASE}/offline`, () => HttpResponse.error()),
+    );
+
+    const err = await api('/offline').catch((e) => e);
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(0);
+    expect(err.code).toBe(ErrorCode.NETWORK);
   });
 
   it('surfaces a non-ok body.message as the ApiError message', async () => {

@@ -4,10 +4,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
   type CreateRunRequest,
+  ErrorCode,
   RunMode,
   RunStatus,
 } from '@tribunal/shared-types';
 import { ChargeSheetsService } from '../chargesheets/chargesheets.service';
+import { classifyError, messageFor } from '../common/classify-error';
 import { EconomyService } from '../economy/economy.service';
 import { LoggingService } from '../logging/logging.service';
 import { OpenRouterClient } from '../openrouter/openrouter.client';
@@ -180,7 +182,9 @@ export class TribunalService {
       const modelFor = (key: string): string =>
         req.mode === RunMode.A_single ? (modelSingle as string) : assignment[key];
 
-      let runError: string | null = null;
+      // Set if any judge's verdict had to fall back (§5.6): a completed run that
+      // carries the VERDICT_UNREADABLE flag (SPEC §12.1), not a failure.
+      let verdictFellBack = false;
 
       // Models actually used this run (after any restricted-model swaps), so
       // Mode B stays distinct where possible and persistence records the truth.
@@ -282,7 +286,7 @@ export class TribunalService {
             const p2 = parseVerdict(reask.content);
             if (isNeedsReask(p2)) {
               parsed = fallbackVerdict(raw);
-              runError = `verdict parse fell back for ${judge.key}`;
+              verdictFellBack = true;
             } else {
               parsed = p2;
             }
@@ -321,7 +325,9 @@ export class TribunalService {
       run.totalCompletionTokens = sum(all, 'completionTokens');
       run.totalTokens = sum(all, 'totalTokens');
       run.totalCostUsd = totalCost;
-      run.error = runError;
+      // A completed run may still carry the non-fatal VERDICT_UNREADABLE flag (§12.1).
+      run.errorCode = verdictFellBack ? ErrorCode.VERDICT_UNREADABLE : null;
+      run.error = verdictFellBack ? messageFor(ErrorCode.VERDICT_UNREADABLE) : null;
       const saved = await this.runs.save(run);
       await this.economy.writeRun(saved, speeches, verdicts);
       this.logger.log(
@@ -335,16 +341,20 @@ export class TribunalService {
       });
       return saved;
     } catch (err) {
-      const message = (err as Error)?.message ?? 'Run failed.';
-      this.logger.error(`Run ${run.id} failed: ${message}`);
+      // Console + §5.7 log keep the RAW cause; the persisted run stores only a
+      // user-safe message + stable code (SPEC §12.1).
+      const raw = (err as Error)?.message ?? 'Run failed.';
+      this.logger.error(`Run ${run.id} failed: ${raw}`);
       this.logging.logRunLifecycle({
         runId: run.id,
         status: 'failed',
         mode: run.mode,
         error: err,
       });
+      const { code, message } = classifyError(err);
       run.status = RunStatus.failed;
       run.error = message;
+      run.errorCode = code;
       run.completedAt = new Date();
       const saved = await this.runs.save(run);
       // Persist partial economy so token/cost spent so far is still recorded.
