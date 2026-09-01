@@ -62,6 +62,15 @@ export const envSchema = z.object({
   // exhaust MODEL_MAX_TOKENS before emitting the required verdict block (§5.6).
   DISABLE_MODEL_REASONING: booleanFromEnv.default(true),
 
+  // --- Diagnostic logging (SPEC §5.7) — durable forensic file log ---
+  // Directory for the daily JSONL log (`app-YYYY-MM-DD.jsonl`), resolved from the
+  // workspace root; under the already-gitignored data/.
+  LOG_DIR: z.string().default('apps/api/data/logs'),
+  // Write to file (default); false = console only (e.g. under test).
+  LOG_TO_FILE: booleanFromEnv.default(true),
+  // Minimum level written to the diagnostic log.
+  LOG_LEVEL: z.enum(['info', 'warn', 'error']).default('info'),
+
   // --- Persistence (SPEC §4, §9) ---
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
 

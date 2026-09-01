@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import type { LoggingService } from '../logging/logging.service';
 import {
   DataPolicyError,
   ModelUnavailableError,
@@ -24,6 +25,13 @@ import {
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger('Exceptions');
+
+  /**
+   * `logging` is optional so the filter can be `new`ed directly (unit tests);
+   * `main.ts` passes the app's {@link LoggingService} so unhandled errors also
+   * land in the diagnostic log (SPEC §5.7).
+   */
+  constructor(private readonly logging?: LoggingService) {}
 
   catch(exception: unknown, host: ArgumentsHost): void {
     const res = host.switchToHttp().getResponse<Response>();
@@ -55,6 +63,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
     } else if (exception instanceof Error) {
       message = exception.message;
       this.logger.error(exception.stack);
+      // Durable record of the unhandled error beside the console stack (§5.7).
+      this.logging?.logUnhandledError(exception, message);
     }
 
     res.status(status).json({ statusCode: status, message });

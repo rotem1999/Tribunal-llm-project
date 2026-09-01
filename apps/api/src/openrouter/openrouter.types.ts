@@ -8,6 +8,12 @@ export interface CallModelParams {
   userPrompt: string;
   temperature: number;
   maxTokens: number;
+  /**
+   * Optional correlation context for the diagnostic log (SPEC §5.7). Not sent to
+   * OpenRouter — only tags the log entry so a call can be traced to its run/persona.
+   */
+  runId?: string;
+  personaKey?: string;
 }
 
 /** Normalized usage read straight from OpenRouter's `usage` (SPEC §5.4). */

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app/app.module';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
+import { LoggingService } from './logging/logging.service';
 import { setupSwagger } from './swagger';
 
 async function bootstrap() {
@@ -14,8 +15,9 @@ async function bootstrap() {
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
   );
-  // Map domain errors (data-policy 404, 402, 429) to the right responses (§12).
-  app.useGlobalFilters(new AllExceptionsFilter());
+  // Map domain errors (data-policy 404, 402, 429) to the right responses (§12);
+  // the diagnostic logger records unhandled errors to file too (§5.7).
+  app.useGlobalFilters(new AllExceptionsFilter(app.get(LoggingService)));
   // CORS locked to configured frontend origins (SPEC §7, §13).
   app.enableCors({
     origin: config
