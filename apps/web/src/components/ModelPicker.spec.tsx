@@ -61,7 +61,7 @@ describe('ModelPicker', () => {
     expect(optionValues()).toContain(PAID);
   });
 
-  it('renders the "Auto (top free model)" option when allowAuto is set', () => {
+  it('renders the "Auto · top free model" option when allowAuto is set', () => {
     render(
       <ModelPicker
         models={makeModels()}
@@ -72,7 +72,7 @@ describe('ModelPicker', () => {
       />,
     );
     expect(
-      screen.getByRole('option', { name: /Auto \(top free model\)/ }),
+      screen.getByRole('option', { name: /Auto · top free model/ }),
     ).toBeInTheDocument();
   });
 
@@ -86,7 +86,7 @@ describe('ModelPicker', () => {
       />,
     );
     expect(
-      screen.queryByRole('option', { name: /Auto \(top free model\)/ }),
+      screen.queryByRole('option', { name: /Auto · top free model/ }),
     ).not.toBeInTheDocument();
     const placeholder = screen.getByRole('option', {
       name: /Choose a model/,
@@ -106,11 +106,11 @@ describe('ModelPicker', () => {
     );
     // Free model → "free".
     expect(
-      screen.getByRole('option', { name: new RegExp(`${FREE_A} — free`) }),
+      screen.getByRole('option', { name: new RegExp(`${FREE_A} · free`) }),
     ).toBeInTheDocument();
     // Paid model → "$0.25 / $1.25 per 1M".
     const paidOption = screen.getByRole('option', {
-      name: new RegExp(`${PAID} —`),
+      name: new RegExp(`${PAID} ·`),
     });
     expect(paidOption.textContent).toMatch(/per 1M/);
     expect(paidOption.textContent).toContain('$0.25 / $1.25 per 1M');
