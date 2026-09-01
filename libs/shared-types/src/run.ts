@@ -7,8 +7,13 @@ import type { RunEconomy, VerdictTally } from './economy.js';
 /** `POST /runs` body — no charge-sheet text (the server loads it, SPEC §10.1). */
 export interface CreateRunRequest {
   mode: RunMode;
-  /** Mode A only: pin the single model; omit to auto-pick a free one. */
+  /** Mode A only: pin the single model (free or paid); omit to auto-pick the top free one. */
   modelSingle?: string;
+  /**
+   * Mode B only: an explicit `{ personaKey → modelId }` map (SPEC §5.2). The UI
+   * sends all 7; when omitted the server auto-assigns free models (API fallback).
+   */
+  modelByPersona?: Record<string, string>;
   /** Optional: which stored charge sheet to use; defaults to the active one. */
   chargeSheetId?: string;
 }

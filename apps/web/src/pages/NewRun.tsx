@@ -4,46 +4,62 @@ import {
   ErrorCode,
   RunMode,
   type ChargeSheet,
-  type FreeModel,
+  type ModelInfo,
+  type PersonaInfo,
 } from '@tribunal/shared-types';
 import { getActiveChargeSheet } from '../api/chargeSheet';
 import { codeOf } from '../api/errors';
-import { getFreeModels } from '../api/models';
+import { getModels } from '../api/models';
+import { getPersonas } from '../api/personas';
 import { createRun } from '../api/runs';
 import { ErrorNotice } from '../components/ErrorNotice';
+import { ModelPicker } from '../components/ModelPicker';
 import { ModeToggle } from '../components/ModeToggle';
 import { Button, Card, Eyebrow } from '../components/ui';
 
-/** New Run (SPEC §11): read-only active charge sheet, Mode toggle, Mode-A model
- * picker, Run button. No upload/edit control (D9). */
+/** Human label for a persona row in the Mode B picker list. */
+function personaLabel(p: PersonaInfo): string {
+  const role = p.side ? `${p.role} · ${p.side}` : p.role;
+  return `${p.name} (${role})`;
+}
+
+/** New Run (SPEC §11): read-only active charge sheet, Mode toggle, model
+ * picker(s) with free-default + paid opt-in, Run button. No upload/edit (D9). */
 export function NewRun() {
   const navigate = useNavigate();
   const [sheet, setSheet] = useState<ChargeSheet | null>(null);
   const [mode, setMode] = useState<RunMode>(RunMode.A_single);
-  const [models, setModels] = useState<FreeModel[]>([]);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [personas, setPersonas] = useState<PersonaInfo[]>([]);
+  const [showPaid, setShowPaid] = useState(false);
+  // Mode A: '' means "Auto". Mode B: personaKey → modelId (all required).
   const [modelSingle, setModelSingle] = useState('');
+  const [modelByPersona, setModelByPersona] = useState<Record<string, string>>({});
   const [running, setRunning] = useState(false);
   const [errorCode, setErrorCode] = useState<ErrorCode | null>(null);
 
   useEffect(() => {
     getActiveChargeSheet().then(setSheet).catch(() => undefined);
+    getModels().then(setModels).catch(() => undefined);
+    getPersonas().then(setPersonas).catch(() => undefined);
   }, []);
 
-  useEffect(() => {
-    if (mode === RunMode.A_single && models.length === 0) {
-      getFreeModels().then(setModels).catch(() => undefined);
-    }
-  }, [mode, models.length]);
+  const hasPaid = models.some((m) => !m.isFree);
+  // Mode B can only start once every persona has a chosen model (SPEC §11).
+  const allPicked =
+    personas.length > 0 && personas.every((p) => modelByPersona[p.key]);
+  const canRun =
+    !running && (mode === RunMode.A_single || allPicked);
 
   async function run() {
     setRunning(true);
     setErrorCode(null);
     try {
-      const { runId } = await createRun({
-        mode,
-        modelSingle:
-          mode === RunMode.A_single && modelSingle ? modelSingle : undefined,
-      });
+      const { runId } = await createRun(
+        mode === RunMode.A_single
+          ? { mode, modelSingle: modelSingle || undefined }
+          : { mode, modelByPersona },
+      );
       navigate(`/runs/${runId}`);
     } catch (err) {
       setErrorCode(codeOf(err));
@@ -79,29 +95,58 @@ export function NewRun() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-xs uppercase tracking-[0.12em] text-neutral-500">
-          Mode
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-xs uppercase tracking-[0.12em] text-neutral-500">
+            Mode
+          </h2>
+          {hasPaid && (
+            <label className="flex items-center gap-2 text-xs text-neutral-400">
+              <input
+                type="checkbox"
+                checked={showPaid}
+                onChange={(e) => setShowPaid(e.target.checked)}
+                className="accent-accent"
+              />
+              Show paid models
+            </label>
+          )}
+        </div>
         <ModeToggle value={mode} onChange={setMode} />
-        {mode === RunMode.A_single && (
+
+        {mode === RunMode.A_single ? (
           <div className="pt-2">
             <label className="block space-y-1.5">
               <span className="text-xs uppercase tracking-[0.12em] text-neutral-500">
                 Model (optional)
               </span>
-              <select
+              <ModelPicker
+                models={models}
                 value={modelSingle}
-                onChange={(e) => setModelSingle(e.target.value)}
-                className="w-full rounded border border-neutral-800 bg-surface px-3 py-2 text-sm text-text focus:border-accent focus:outline-none"
-              >
-                <option value="">Auto (top free model)</option>
-                {models.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.id}
-                  </option>
-                ))}
-              </select>
+                onChange={setModelSingle}
+                showPaid={showPaid}
+                allowAuto
+              />
             </label>
+          </div>
+        ) : (
+          <div className="space-y-3 pt-2">
+            <p className="text-xs text-neutral-500">
+              Choose a model for each of the 7 personas.
+            </p>
+            {personas.map((p) => (
+              <label key={p.key} className="block space-y-1.5">
+                <span className="text-xs text-neutral-400">{personaLabel(p)}</span>
+                <ModelPicker
+                  id={`model-${p.key}`}
+                  models={models}
+                  value={modelByPersona[p.key] ?? ''}
+                  onChange={(id) =>
+                    setModelByPersona((prev) => ({ ...prev, [p.key]: id }))
+                  }
+                  showPaid={showPaid}
+                />
+              </label>
+            ))}
           </div>
         )}
       </section>
@@ -109,8 +154,12 @@ export function NewRun() {
       {errorCode && <ErrorNotice code={errorCode} />}
 
       <div>
-        <Button onClick={run} disabled={running}>
-          {running ? 'Running the tribunal…' : 'Run tribunal'}
+        <Button onClick={run} disabled={!canRun}>
+          {running
+            ? 'Running the tribunal…'
+            : mode === RunMode.B_per_persona && !allPicked
+              ? 'Pick a model for every persona'
+              : 'Run tribunal'}
         </Button>
       </div>
     </div>

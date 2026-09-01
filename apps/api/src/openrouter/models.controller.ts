@@ -1,6 +1,6 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
-import type { FreeModel } from '@tribunal/shared-types';
+import type { FreeModel, ModelInfo } from '@tribunal/shared-types';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ModelsService } from './models.service';
 
@@ -10,6 +10,16 @@ import { ModelsService } from './models.service';
 @Controller('models')
 export class ModelsController {
   constructor(private readonly models: ModelsService) {}
+
+  @Get()
+  @ApiOperation({
+    summary: 'List usable OpenRouter models — free and paid — with pricing (cached).',
+  })
+  @ApiResponse({ status: 200, description: 'Usable text models, free-first then cheapest (SPEC §5.2).' })
+  @ApiResponse({ status: 401, description: 'Missing or invalid token.' })
+  all(): Promise<ModelInfo[]> {
+    return this.models.getUsableModels();
+  }
 
   @Get('free')
   @ApiOperation({ summary: 'List the live free OpenRouter models (cached).' })

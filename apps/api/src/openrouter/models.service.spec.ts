@@ -420,3 +420,220 @@ describe('ModelsService.getFreeModels — all free models unavailable', () => {
     );
   });
 });
+
+describe('ModelsService.getUsableModels (free + paid filtering + sorting)', () => {
+  it('keeps BOTH free and paid text models, dropping only non-text/blacklisted ones', async () => {
+    mockModelsFetch([
+      freeMid,
+      fullyPaid,
+      freePromptPaidCompletion, // paid (non-zero completion) — still a usable text model
+      freeBig,
+      freeA,
+    ]);
+    const service = new ModelsService(makeConfig());
+    const ids = (await service.getUsableModels()).map((m) => m.id);
+    // Free AND paid text models are all kept.
+    expect(ids).toContain('free/big');
+    expect(ids).toContain('paid/model');
+    expect(ids).toContain('sneaky/paid-completion');
+    expect(ids).toHaveLength(5);
+  });
+
+  it('excludes non-text (audio) models and blacklisted task-type ids', async () => {
+    const lyria: RawModel = {
+      id: 'google/lyria-3-audio-output',
+      context_length: 1048576,
+      pricing: { prompt: '0', completion: '0' },
+      architecture: { output_modalities: ['text', 'audio'] },
+    };
+    const embed: RawModel = {
+      id: 'cohere/embed-4',
+      context_length: 500000,
+      pricing: { prompt: '0.0000001', completion: '0' },
+    };
+    mockModelsFetch([lyria, embed, fullyPaid, freeBig]);
+    const service = new ModelsService(makeConfig());
+    const ids = (await service.getUsableModels()).map((m) => m.id);
+    expect(ids).not.toContain('google/lyria-3-audio-output');
+    expect(ids).not.toContain('cohere/embed-4');
+    expect(ids).toEqual(['free/big', 'paid/model']);
+  });
+
+  it('sets isFree correctly and parses pricing strings to numbers', async () => {
+    mockModelsFetch([freeBig, freePromptPaidCompletion, fullyPaid]);
+    const service = new ModelsService(makeConfig());
+    const models = await service.getUsableModels();
+    const byId = Object.fromEntries(models.map((m) => [m.id, m]));
+
+    expect(byId['free/big'].isFree).toBe(true);
+    expect(byId['free/big'].promptUsd).toBe(0);
+    expect(byId['free/big'].completionUsd).toBe(0);
+
+    // Any non-zero price → not free.
+    expect(byId['sneaky/paid-completion'].isFree).toBe(false);
+    expect(byId['sneaky/paid-completion'].promptUsd).toBe(0);
+    expect(byId['sneaky/paid-completion'].completionUsd).toBe(0.000002);
+
+    expect(byId['paid/model'].isFree).toBe(false);
+    expect(byId['paid/model'].promptUsd).toBe(0.0001);
+    expect(byId['paid/model'].completionUsd).toBe(0.0002);
+  });
+
+  it('sorts free-first, then price ascending, then context descending', async () => {
+    mockModelsFetch([
+      fullyPaid, // paid, 0.0003 total, ctx 1_000_000
+      freePromptPaidCompletion, // paid, 0.000002 total, ctx 200_000
+      freeMid, // free, ctx 32_000
+      freeBig, // free, ctx 128_000
+    ]);
+    const service = new ModelsService(makeConfig());
+    const ids = (await service.getUsableModels()).map((m) => m.id);
+    expect(ids).toEqual([
+      'free/big', // free, biggest context
+      'free/mid', // free
+      'sneaky/paid-completion', // cheapest paid
+      'paid/model', // priciest paid
+    ]);
+  });
+
+  it('the GET /models controller path returns free AND paid; getFreeModels is the free subset', async () => {
+    mockModelsFetch([freeBig, fullyPaid, freeA]);
+    const service = new ModelsService(makeConfig());
+    const usable = (await service.getUsableModels()).map((m) => m.id);
+    const free = (await service.getFreeModels()).map((m) => m.id);
+    expect(usable).toEqual(['free/big', 'free/a', 'paid/model']);
+    expect(free).toEqual(['free/big', 'free/a']);
+  });
+});
+
+describe('ModelsService.resolveModeAModel — paid pin + config source', () => {
+  it('returns a PAID pin when it is a usable candidate', async () => {
+    mockModelsFetch([freeBig, freeA, fullyPaid]);
+    const service = new ModelsService(makeConfig());
+    expect(await service.resolveModeAModel('paid/model')).toBe('paid/model');
+  });
+
+  it('returns a FREE pin when it is a usable candidate', async () => {
+    mockModelsFetch([freeBig, freeA, fullyPaid]);
+    const service = new ModelsService(makeConfig());
+    expect(await service.resolveModeAModel('free/a')).toBe('free/a');
+  });
+
+  it('falls back to the top free model when the pin is unusable (unknown id)', async () => {
+    mockModelsFetch([freeBig, freeA, fullyPaid]);
+    const service = new ModelsService(makeConfig());
+    expect(await service.resolveModeAModel('does/not-exist')).toBe('free/big');
+  });
+
+  it('honors MODE_A_MODEL from config (including a paid one) when no arg is passed', async () => {
+    mockModelsFetch([freeBig, freeA, fullyPaid]);
+    const service = new ModelsService(makeConfig({ MODE_A_MODEL: 'paid/model' }));
+    expect(await service.resolveModeAModel()).toBe('paid/model');
+  });
+
+  it('an explicit preferred arg overrides MODE_A_MODEL from config', async () => {
+    mockModelsFetch([freeBig, freeA, fullyPaid]);
+    const service = new ModelsService(makeConfig({ MODE_A_MODEL: 'paid/model' }));
+    expect(await service.resolveModeAModel('free/a')).toBe('free/a');
+  });
+});
+
+describe('ModelsService.assignModeBModels — explicit map', () => {
+  const personaKeys = ['a1', 'a2', 'a3', 'a4', 'j1', 'j2', 'j3'];
+
+  function fullMap(id: string): Record<string, string> {
+    return Object.fromEntries(personaKeys.map((k) => [k, id]));
+  }
+
+  it('returns the caller map verbatim when every persona names a usable model', async () => {
+    mockModelsFetch([freeBig, freeMid, freeA, fullyPaid]);
+    const service = new ModelsService(makeConfig());
+    const requested: Record<string, string> = {
+      a1: 'free/big',
+      a2: 'free/mid',
+      a3: 'free/a',
+      a4: 'paid/model', // paid is allowed in an explicit Mode B map
+      j1: 'free/big',
+      j2: 'free/mid',
+      j3: 'free/a',
+    };
+    expect(await service.assignModeBModels(personaKeys, requested)).toEqual(
+      requested,
+    );
+  });
+
+  it('throws ModelUnavailableError when the map is MISSING a persona', async () => {
+    mockModelsFetch([freeBig, freeMid, freeA]);
+    const service = new ModelsService(makeConfig());
+    const incomplete = { ...fullMap('free/big') };
+    delete incomplete['j3'];
+    await expect(
+      service.assignModeBModels(personaKeys, incomplete),
+    ).rejects.toBeInstanceOf(ModelUnavailableError);
+  });
+
+  it('throws ModelUnavailableError when the map names an unknown/unusable model', async () => {
+    mockModelsFetch([freeBig, freeMid, freeA]);
+    const service = new ModelsService(makeConfig());
+    const bad = { ...fullMap('free/big'), j2: 'nope/not-real' };
+    await expect(
+      service.assignModeBModels(personaKeys, bad),
+    ).rejects.toBeInstanceOf(ModelUnavailableError);
+  });
+
+  it('rejects a map naming a model that exists but was marked unavailable', async () => {
+    mockModelsFetch([freeBig, freeMid, freeA]);
+    const service = new ModelsService(makeConfig());
+    service.markUnavailable('free/mid');
+    const bad = { ...fullMap('free/big'), a2: 'free/mid' };
+    await expect(
+      service.assignModeBModels(personaKeys, bad),
+    ).rejects.toBeInstanceOf(ModelUnavailableError);
+  });
+
+  it('auto-assigns distinct free models when NO map is provided', async () => {
+    const seven: RawModel[] = Array.from({ length: 7 }, (_, i) => ({
+      id: `free/${i}`,
+      context_length: (i + 1) * 1000,
+      pricing: { prompt: '0', completion: '0' },
+    }));
+    mockModelsFetch(seven);
+    const service = new ModelsService(makeConfig());
+    const assignment = await service.assignModeBModels(personaKeys);
+    expect(new Set(Object.values(assignment)).size).toBe(7);
+  });
+
+  it('an empty map is treated as "no map" (auto-assign), not an error', async () => {
+    mockModelsFetch([freeBig, freeMid, freeA]);
+    const service = new ModelsService(makeConfig());
+    const assignment = await service.assignModeBModels(personaKeys, {});
+    expect(Object.keys(assignment)).toHaveLength(7);
+    expect(assignment['a1']).toBe('free/big');
+  });
+});
+
+describe('ModelsService.pickReplacement — free-first across free + paid', () => {
+  beforeEach(() => {
+    // Usable sort -> [free/big, free/a, paid/model].
+    mockModelsFetch([freeA, fullyPaid, freeBig]);
+  });
+
+  it('returns the top usable model not excluded, preferring free over paid', async () => {
+    const service = new ModelsService(makeConfig());
+    expect(await service.pickReplacement(new Set())).toBe('free/big');
+    expect(await service.pickReplacement(new Set(['free/big']))).toBe('free/a');
+    // Both free excluded -> falls through to the paid model.
+    expect(
+      await service.pickReplacement(new Set(['free/big', 'free/a'])),
+    ).toBe('paid/model');
+  });
+
+  it('returns undefined when every usable model is excluded', async () => {
+    const service = new ModelsService(makeConfig());
+    expect(
+      await service.pickReplacement(
+        new Set(['free/big', 'free/a', 'paid/model']),
+      ),
+    ).toBeUndefined();
+  });
+});
