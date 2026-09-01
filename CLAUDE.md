@@ -11,4 +11,4 @@ Projects: `apps/api`, `apps/web`, `libs/shared-types` — run via `nx <target> <
 Invariants:
 - Output = 3 independent verdicts (decision + confidence + reasoning/protocol) + token/cost budget — never merged; any tally is non-binding.
 - `justified` = for the accused; `not_justified` = against.
-- Free OpenRouter models only. Personas from `personalities.json`. Charge sheets editable; each run snapshots its text (immutable). Cases fictional.
+- Models: free by default, **paid opt-in** (owner enabled credit; the OpenRouter key is hard-capped at $5). Mode B picks a model per persona (§5.2). Personas from `personalities.json`. Charge sheets editable; each run snapshots its text (immutable). Cases fictional.

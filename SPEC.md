@@ -37,8 +37,10 @@ One full run = **7 LLM calls** (4 advocates, then 3 judges).
 Selected per-run via a toggle. Exactly one mode runs per run.
 
 - **Mode A — "single model":** one model ID serves all 7 personas. Only the system prompts differ.
-- **Mode B — "model per persona":** each of the 7 personas is assigned a **distinct** model,
-  chosen from OpenRouter's live free-model list. This is the interesting comparison against Mode A.
+- **Mode B — "model per persona":** each of the 7 personas runs a model the user **explicitly picks**
+  for it (free or paid), from OpenRouter's live model list. The New Run UI requires all 7 to be chosen
+  before the run can start (§11); the API also accepts an auto-assignment fallback (§5.2). This is the
+  interesting comparison against Mode A.
 
 ### 1.2 Non-goals (v1)
 
@@ -55,7 +57,7 @@ Selected per-run via a toggle. Exactly one mode runs per run.
 
 | # | Question | Decision |
 |---|----------|----------|
-| D1 | Are charge sheets ever sensitive/private? | **No — always fictional/demo.** Free models are fine; enabling OpenRouter's "may train on / may publish prompts" privacy toggles is acceptable (required for free endpoints — see §5.3). |
+| D1 | Are charge sheets ever sensitive/private? | **No — always fictional/demo.** Free models are fine; enabling OpenRouter's "may train on / may publish prompts" privacy toggles is acceptable (required for free endpoints — see §5.3). **Revised (owner, 2026-09-01): paid models are now permitted** — the owner funded the account. Free stays the default in the UI; paid models are opt-in (§2.1/§5.2/§11). The OpenRouter key carries its own **$5 hard spend cap**, which is the ultimate backstop on top of the per-run ceiling (§5.5). |
 | D2 | Auth / user model | **Single seeded user + JWT.** One username/password seeded at setup; JWT gates the API. No public registration. |
 | D3 | Personalities configurable? | **Fully baked-in, loaded from an owner-provided file.** Not editable in the UI. See §8 for the required file contract. |
 | D4 | Debate depth | **Single blind round.** Advocates get only their persona + charge. Judges get persona + charge + all 4 speeches. No rebuttals. |
@@ -71,8 +73,12 @@ Selected per-run via a toggle. Exactly one mode runs per run.
 - **Charge sheet input:** the program loads the **stored active charge sheet** from the DB (seeded
   from Case T-001). The `.txt` upload / paste textarea from `INTENT.txt` is **deferred** — the entity
   and API are built editable now, but the New Run UI does not expose editing or upload yet (D9).
-- **Model selection:** resolved at runtime from OpenRouter `GET /models`, filtered to zero price
-  (do **not** hardcode model names; the free roster changes monthly).
+- **Model selection:** resolved at runtime from OpenRouter `GET /models` (do **not** hardcode model
+  names; the roster changes monthly). The candidate list keeps every model usable as a text
+  advocate/judge (text output, not a blacklisted task type — §5.2), **both free and paid**, each
+  carrying its price and an `isFree` flag. The UI shows **free by default with paid opt-in** (§11);
+  "Auto" resolves to the top free model. Free models still require the §5.3 privacy toggles; paid
+  models do not.
 - **Position-bias mitigation:** the order in which the 4 speeches are shown to each judge is
   **counterbalanced** (rotated per judge) and the exact order is recorded per run. Rationale: LLM
   judges measurably favor whichever argument they read first (§ research).
@@ -295,9 +301,10 @@ OpenRouter, OpenAI-compatible Chat Completions API.
 ### 5.2 Model resolution (do not hardcode model names)
 1. Fetch `GET /models`. Each entry exposes `id`, `context_length`, and a `pricing` object with
    per-token string prices (`prompt`, `completion`).
-2. **Free filter:** keep models where `pricing.prompt === "0"` **and** `pricing.completion === "0"`.
-   (These are the `:free` endpoints. IDs typically end in `:free`.) Then keep only models usable as
-   a **text advocate/judge**:
+2. **Usable-model filter (free *and* paid):** keep every model usable as a **text advocate/judge**,
+   regardless of price. Record each model's per-token `pricing.prompt` / `pricing.completion` (as
+   numbers) and an **`isFree`** flag — `true` when both are exactly `"0"` (the `:free` endpoints; IDs
+   typically end in `:free`). Then keep only models usable as a **text advocate/judge**:
    - **Text output only** — require `architecture.output_modalities` to be text and reject any that
      also emit `audio`. This unmasks endpoints whose token prices are `"0"` because they bill per
      second of media rather than per token (e.g. Google's Lyria music models), which the price filter
@@ -307,12 +314,19 @@ OpenRouter, OpenAI-compatible Chat Completions API.
      (`content-safety`, `moderation`, `guard`, `embed`, `rerank`, `lyria`, `whisper`, `tts`, `stt`).
      These often return HTTP 200 with empty/degenerate text. Blacklist a **category by name token**,
      never a specific model id (ids drift monthly). Extend at runtime via `MODEL_BLACKLIST` (§9).
-3. Sort candidates by `context_length` descending (need room for charge + 4 speeches for judges).
-4. **Mode A:** use `MODE_A_MODEL` env if set and still free/available; else pick candidate #1.
-5. **Mode B:** assign the first 7 distinct candidates to the 7 personas in a fixed persona order.
-   If fewer than 7 free models are available, round-robin (reuse) to fill 7, and record the actual
-   assignment on each `Speech`/`Verdict`. Persist the assignment so a run is reproducible. In
-   practice the number of **distinct** models is bounded by how many free endpoints the account can
+3. Sort candidates **free-first** (`isFree` before paid), then by price ascending, then by
+   `context_length` descending (judges need room for the charge + 4 speeches). The `GET /models`
+   endpoint returns this full list with pricing + `isFree`; `GET /models/free` returns the free subset
+   (retained). The UI shows free by default and reveals paid on an opt-in toggle (§11).
+4. **Mode A:** use `MODE_A_MODEL` env / the request's `modelSingle` if set and still a usable
+   candidate (**free or paid**); else pick the top **free** candidate ("Auto").
+5. **Mode B:** use the request's explicit **`modelByPersona`** map when provided — it must name a
+   usable model for **all 7** persona keys (the New Run UI enforces this, §11). When the map is
+   **absent**, auto-assign the first 7 distinct **free** candidates in a fixed persona order
+   (round-robin to fill 7 if fewer exist) — a documented API fallback. Record the actual assignment per
+   `Speech`/`Verdict`. Model swaps (§5.4) draw a replacement from the usable pool, **free-first**.
+   Persist the assignment so a run is reproducible. On the **auto-assign fallback** path (no explicit
+   map), the number of **distinct** models is bounded by how many free endpoints the account can
    actually call: OpenRouter gates many `:free` models to approved apps and returns **403**, so those
    are swapped out (§5.4) and Mode B can collapse to the few callable models — expected behavior, not
    a failure. Sending both `X-Title` and `HTTP-Referer` (set `OPENROUTER_APP_URL`) unlocks more of
@@ -321,8 +335,8 @@ OpenRouter, OpenAI-compatible Chat Completions API.
    *fast* (an instant 403) does not swap onto a model another persona is already mid-call with — the
    collision that otherwise collapses Mode B onto one model. Prefer a not-yet-placed replacement;
    fall back to reusing a working model (round-robin) only when the roster is exhausted.
-6. Cache the free list to avoid hammering `/models`; refresh on cache miss or on a 404 data-policy
-   error (§5.3).
+6. Cache the resolved model list (free + paid) to avoid hammering `/models`; refresh on cache miss or
+   on a 404 data-policy error (§5.3).
 
 ### 5.3 The free-model data-policy requirement (must handle explicitly)
 Free endpoints are only served if the OpenRouter **account** has enabled, under Settings → Privacy:
@@ -386,8 +400,10 @@ callModel({ model, systemPrompt, userPrompt, temperature, maxTokens }) → {
 3. **Advocate phase** — build each advocate's prompt = `{ system: persona.systemPrompt, user:
    chargeSheetSnapshot }`. The advocate prompt constrains output to the in-character speech only — no preamble, meta-commentary, headings, or stage directions — and a conservative sanitizer strips a leading filler line if one slips through. Run the 4 calls in parallel. Persist a `Speech` per call. After each call, add
    its `costUsd` to the running total; if total > `costCeilingUsd`, stop, set status
-   `aborted_over_budget`, persist what exists, still write economy, and return. (With free models
-   this never triggers; the guard exists for safety and future paid models.)
+   `aborted_over_budget`, persist what exists, still write economy, and return. (With free models this
+   never triggers; with **paid models it is now live** — D1. On top of it, the OpenRouter **key's own
+   $5 hard cap** is the ultimate backstop: once hit, calls return 402 → the run fails with the
+   `OUT_OF_CREDITS` message (§12.1), no partial spend beyond the cap.)
 4. **Judge phase** — for each judge, compute a **counterbalanced speech order** (rotate the 4
    speeches by judge index; record it). Build prompt = `{ system: judge.systemPrompt, user:
    chargeSheetSnapshot + rendered speeches in that order + a strict output-format instruction }`. Run the 3
@@ -650,12 +666,13 @@ All JSON. All except `/auth/login` require `Authorization: Bearer <jwt>`.
 |--------|------|--------------|---------|
 | POST | `/auth/login` | `{ username, password }` | `{ accessToken }` |
 | GET | `/auth/me` | — | `{ id, username }` |
-| GET | `/models/free` | — | `[{ id, contextLength }]` (cached live free list) |
+| GET | `/models` | — | `[{ id, contextLength, promptUsd, completionUsd, isFree }]` — cached live list of usable text models, **free + paid**, sorted free-first then price asc (§5.2). Feeds the pickers. |
+| GET | `/models/free` | — | `[{ id, contextLength }]` (cached live free subset; retained) |
 | GET | `/personas` | — | roster for display/animation: `[{ key, name, role, side? }]` — no `systemPrompt` |
 | GET | `/charge-sheet` | — | the active charge sheet `{ id, title, content, updatedAt }` |
 | GET | `/charge-sheets` | — | list of all charge sheets (id, title, isActive, updatedAt) |
 | PATCH | `/charge-sheet/:id` | `{ title?, content?, isActive? }` | updates a charge sheet (editable per D9); setting `isActive:true` deactivates the others. **Built and protected, but not surfaced in the v1 UI.** |
-| POST | `/runs` | `{ mode, modelSingle?, chargeSheetId? }` | `{ runId }` — **creates** the run (status `running`) and returns immediately; the pipeline runs in the background (see §10.1). Uses `chargeSheetId` or the active charge sheet. No charge-sheet text in the body. |
+| POST | `/runs` | `{ mode, modelSingle?, modelByPersona?, chargeSheetId? }` | `{ runId }` — **creates** the run (status `running`) and returns immediately; the pipeline runs in the background (see §10.1). Mode A uses `modelSingle` (optional; else Auto). Mode B uses `modelByPersona` (a `{ personaKey → modelId }` map; the UI sends all 7, else the server auto-assigns — §5.2). Uses `chargeSheetId` or the active charge sheet. No charge-sheet text in the body. |
 | GET | `/runs` | `?limit&offset` | list of run summaries (id, createdAt, mode, verdictTally, totalCostUsd, status) |
 | GET | `/runs/:id` | — | full run: charge, 4 speeches, 3 verdicts (each with its short opinion), economy, optional non-binding `verdictTally`. Speeches/verdicts include the resolved persona `name`. |
 | GET | `/runs/:id/progress` | — | lightweight progress: `{ status, phase, completedPersonaKeys[], error }` — polled to drive the live animation (§11) |
@@ -678,9 +695,16 @@ synchronously; the async model here is the extension the original §10.1 anticip
 Pages:
 - **Login** — username/password → stores JWT.
 - **New Run** — displays the **stored active charge sheet read-only** (from `GET /charge-sheet`; no
-  edit/upload control in v1, per D9), a **Mode A/B toggle** with a one-line explanation of each, and
-  (Mode A) an optional model picker fed by `GET /models/free`. "Run tribunal" button → `POST /runs`
-  (body carries only `mode` and optional `modelSingle`) → navigates immediately to the live Run Result view.
+  edit/upload control in v1, per D9), a **Mode A/B toggle** with a one-line explanation of each, and a
+  model picker fed by `GET /models`. Model pickers show **free models by default** with each model's
+  price; a **"show paid models"** opt-in toggle reveals the paid ones (D1/§5.2). "Free ($0)" is
+  labelled honestly.
+  - **Mode A:** one optional model picker (an "Auto — top free model" default; may pick free or paid).
+  - **Mode B:** **seven** pickers, one per persona (in roster order from `GET /personas`, each titled
+    by the persona's name/role). **All 7 must be chosen** before the run can start — the "Run tribunal"
+    button stays disabled until then (the paid opt-in applies to every picker).
+  "Run tribunal" button → `POST /runs` (body carries `mode` + `modelSingle` in Mode A, or the full
+  `modelByPersona` map in Mode B) → navigates immediately to the live Run Result view.
 - **Run Result** — a **two-tab view** driven by a small segmented tab bar (UX rule 4: self-evident,
   no instructions). The default tab is **Verdict**; the other is **Economy**.
   - **Verdict tab** — **Judges first** (they deliver the verdict; UX rule 2: structure mirrors the
@@ -881,7 +905,8 @@ verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
   verdicts** (each with decision + confidence + reasoning/protocol) plus the code budget — matching
   INTENT's output clause. The system produces **no** authoritative combined/majority verdict; any
   vote tally shown is explicitly non-binding. Each run stores an immutable `chargeSheetSnapshot`.
-- Mode A uses one model; Mode B assigns distinct free models per persona (recorded per call).
+- Mode A uses one model (free or paid); Mode B runs a **user-selected** model per persona (free or
+  paid; all 7 chosen in the UI, or auto-assigned via the API fallback) — recorded per call.
 - Every call's real token usage and `usage.cost` are captured; a per-run JSON file and a ledger
   entry are written; the same economy is shown in the UI with a working JSON download.
 - Free-model 404 data-policy error yields the actionable message, not a generic crash.
