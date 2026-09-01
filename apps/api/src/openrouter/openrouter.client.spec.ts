@@ -112,6 +112,24 @@ describe('OpenRouterClient.callModel — success + usage capture', () => {
     expect(typeof result.latencyMs).toBe('number');
   });
 
+  it('passes finish_reason through as finishReason ("length" when present, null when omitted)', async () => {
+    setFetch(async () =>
+      okResponse({
+        choices: [{ message: { content: 'x' }, finish_reason: 'length' }],
+        usage: { total_tokens: 1 },
+      }),
+    );
+    expect((await client.callModel(PARAMS)).finishReason).toBe('length');
+
+    setFetch(async () =>
+      okResponse({
+        choices: [{ message: { content: 'x' } }],
+        usage: { total_tokens: 1 },
+      }),
+    );
+    expect((await client.callModel(PARAMS)).finishReason).toBeNull();
+  });
+
   it('reports reasoningTokens as null when the model omits them', async () => {
     setFetch(async () =>
       okResponse({

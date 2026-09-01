@@ -55,6 +55,12 @@ export interface Verdict {
   /** 0-100. */
   confidence: number;
   reasoning: string;
+  /**
+   * The opinion could not be read — the model's reply was cut off, a re-ask
+   * still failed, or it was empty (SPEC §5.6). `decision`/`confidence` still
+   * stand; the UI shows a "recess" placeholder instead of `reasoning` (§11).
+   */
+  truncated: boolean;
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;

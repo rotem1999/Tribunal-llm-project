@@ -148,6 +148,7 @@ function toVerdictDto(v: Verdict, personaName: string): VerdictDto {
     decision: v.decision,
     confidence: v.confidence,
     reasoning: v.reasoning,
+    truncated: v.truncated ?? false,
     promptTokens: v.promptTokens,
     completionTokens: v.completionTokens,
     totalTokens: v.totalTokens,

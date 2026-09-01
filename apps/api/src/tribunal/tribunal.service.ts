@@ -271,6 +271,9 @@ export class TribunalService {
           );
           let raw = res.content;
           let usage = res.usage;
+          // finish_reason of the answer we ultimately parse (re-ask if any).
+          let finishReason = res.finishReason;
+          let fellBack = false;
           let parsed = parseVerdict(res.content);
 
           // One re-ask if the strict block is missing (SPEC §5.6).
@@ -286,14 +289,23 @@ export class TribunalService {
             });
             raw = `${res.content}\n---REASK---\n${reask.content}`;
             usage = mergeUsage(res.usage, reask.usage);
+            finishReason = reask.finishReason;
             const p2 = parseVerdict(reask.content);
             if (isNeedsReask(p2)) {
               parsed = fallbackVerdict(raw);
+              fellBack = true;
               verdictFellBack = true;
             } else {
               parsed = p2;
             }
           }
+
+          // The opinion is unreadable when the reply was cut off at max_tokens
+          // (`length`), the fallback was used, or nothing parsed out (SPEC §5.6).
+          const truncated =
+            fellBack ||
+            finishReason === 'length' ||
+            parsed.reasoning.trim().length === 0;
 
           return this.verdicts.save(
             this.verdicts.create({
@@ -305,6 +317,7 @@ export class TribunalService {
               confidence: parsed.confidence,
               reasoning: parsed.reasoning,
               rawResponse: raw,
+              truncated,
               speechOrderShown: shownOrder,
               ...usageColumns({ ...res, usage }),
             }),

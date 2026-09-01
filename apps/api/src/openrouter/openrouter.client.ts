@@ -248,6 +248,7 @@ export class OpenRouterClient {
         costUsd: u.cost ?? 0,
       },
       latencyMs,
+      finishReason: json.choices?.[0]?.finish_reason ?? null,
     };
   }
 

@@ -275,6 +275,7 @@ This is the canonical case extracted from the owner's dossier.
 | confidence | integer | 0–100, parsed |
 | reasoning | text | the judge's **short opinion** (parsed from `OPINION:`, §5.6); full text in `rawResponse` |
 | rawResponse | text | full model text (fallback if parsing partial) |
+| truncated | boolean | default `false`; the judge's opinion could not be read — the model's reply was **cut off** (`finish_reason = length`, common on free models' small token caps), a re-ask still failed (conservative fallback, §5.6), or the parsed opinion was empty. `decision` + `confidence` are still shown; only the **opinion body** is replaced by a friendly "recess" placeholder in the card (§5.6/§11). |
 | speechOrderShown | jsonb | order of speeches this judge saw (audit) |
 | promptTokens / completionTokens / totalTokens | integer | |
 | reasoningTokens | integer null | |
@@ -439,6 +440,16 @@ absent but `DECISION` parsed). If `DECISION` or `CONFIDENCE` is missing, do a si
 ("Reply with ONLY the three lines…") using the same model; if it still fails, store `rawResponse`,
 mark the verdict `decision` via a conservative fallback (`justified` = benefit of the doubt to the
 accused) with `confidence: 0`, and flag the run in `error`. Always keep `rawResponse`.
+
+**Truncated-opinion flag (`truncated`).** Free models cap completion tokens, so a judge's reply can
+stop **mid-opinion** (or a slow model can time out) — leaving a `decision`/`confidence` we can still
+use but no readable opinion. Set `truncated = true` on the persisted verdict when **any** of: the
+final judge call's `finish_reason` is `length` (the reply was cut off at `max_tokens`); the
+conservative fallback above was used (parsing failed even after the re-ask); or the parsed opinion is
+empty/whitespace. The verdict still carries its parsed-or-fallback `decision` and `confidence`
+unchanged — **only the opinion display is affected**: the card (§11) shows a short, friendly "the
+judge stepped out for a recess" placeholder instead of dumping the cut-off/garbled text. `rawResponse`
+is always kept for forensics regardless.
 
 ### 5.7 Diagnostic logging (`logging` module — backend observability)
 
@@ -711,10 +722,15 @@ Pages:
 - **Run Result** — a **two-tab view** driven by a small segmented tab bar (UX rule 4: self-evident,
   no instructions). The default tab is **Verdict**; the other is **Economy**.
   - **Verdict tab** — **Judges first** (they deliver the verdict; UX rule 2: structure mirrors the
-    domain). The 3 VerdictCards, each titled with the judge's **name**, show a decision badge
-    (justified/not_justified), confidence, and the judge's **short opinion** (§5.6). The persona **name** sits on its own header
-    line so it stays legible even in the narrow judges column — never crowded out by the badge or
-    confidence. Below them, the
+    domain). Each of the 3 VerdictCards is titled with the judge's **name** (on its own header line so
+    it stays legible in the narrow judges column) and reads top-to-bottom as: (1) the **verdict** — a
+    decision badge (justified/not_justified) + confidence, exactly as today; then (2) a labelled
+    **Reasoning** section holding the judge's **short opinion** (§5.6) — how that judge weighed the
+    speeches it was shown. When the verdict is `truncated` (§5.6 — the model's reply was cut off or
+    unreadable), the Reasoning section instead shows a short, friendly **recess placeholder** (e.g.
+    "This judge stepped out for a brief recess and didn't file an opinion — their model's reply was cut
+    off") rather than raw/garbled text; the decision badge and confidence are still shown unchanged.
+    Below them, the
     The three judge cards share **one group expand/collapse control** on the Judges section header
     (a rotating caret / "Expand all" affordance), **not** a control on each card: readers either open
     **all** judgements at once (every card expanded) or see them **all** cut to a fixed collapsed

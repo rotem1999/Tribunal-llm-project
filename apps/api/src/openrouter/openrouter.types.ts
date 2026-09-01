@@ -32,11 +32,17 @@ export interface CallModelResult {
   content: string;
   usage: CallUsage;
   latencyMs: number;
+  /**
+   * Why generation stopped, from `choices[0].finish_reason`. `"length"` means
+   * the reply was cut off at `max_tokens` (SPEC §5.6 truncation) — common on
+   * free models' small caps. `null` when the provider omits it.
+   */
+  finishReason: string | null;
 }
 
 /** Minimal shape of OpenRouter's chat-completions response we read. */
 export interface OpenRouterChatResponse {
-  choices?: Array<{ message?: { content?: string } }>;
+  choices?: Array<{ message?: { content?: string }; finish_reason?: string | null }>;
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
