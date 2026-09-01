@@ -8,10 +8,11 @@ import {
   type PersonaInfo,
 } from '@tribunal/shared-types';
 import { getActiveChargeSheet } from '../api/chargeSheet';
-import { ApiError } from '../api/client';
+import { codeOf } from '../api/errors';
 import { getModels } from '../api/models';
 import { getPersonas } from '../api/personas';
 import { createRun } from '../api/runs';
+import { ErrorNotice } from '../components/ErrorNotice';
 import { ModelPicker } from '../components/ModelPicker';
 import { ModeToggle } from '../components/ModeToggle';
 import { Button, Card, Eyebrow } from '../components/ui';
