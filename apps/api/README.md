@@ -59,6 +59,7 @@ and fill in the required values.
 | `JUDGE_TEMPERATURE` | no | `0.2` | judge sampling temperature |
 | `MODEL_MAX_TOKENS` | no | `1024` | per-call output cap |
 | `CALL_TIMEOUT_MS` | no | `90000` | per-call timeout |
+| `JUDGE_REASONING_EFFORT` | no | `low` | reasoning effort on **judge** calls so the model returns its own thinking for display (`none`\|`minimal`\|`low`\|`medium`\|`high`); higher = lengthier thinking but more truncation risk on free models |
 | `DATABASE_URL` | **yes** | — | local Postgres connection string |
 | `JWT_SECRET` | **yes** | — | JWT signing secret (use a long random string) |
 | `JWT_EXPIRES_IN` | no | `1d` | token lifetime |
@@ -119,8 +120,13 @@ where possible.
 
 Each judge's written reasoning is its **protocol** — the account of *how* it reached its decision. The
 pipeline parses each judge's answer into `{ decision, confidence, reasoning }` and **never** collapses
-the three into an authoritative combined verdict. The run snapshots the charge sheet content and the
-cost ceiling up front, so a mid-flight edit to the charge sheet can't change an in-progress run.
+the three into an authoritative combined verdict. Judge calls also *request the model's own reasoning*
+(`JUDGE_REASONING_EFFORT`, default `low`) and, when the model returns it, store it on the verdict as
+`modelReasoning` — surfaced in the UI as a collapsible "Model's reasoning" section beneath the opinion;
+non-reasoning models simply return none. If a reply is cut off or unreadable the verdict is flagged
+`truncated` and the card shows a brief "recess" placeholder while still keeping the decision and
+confidence. The run snapshots the charge sheet content and the cost ceiling up front, so a mid-flight
+edit to the charge sheet can't change an in-progress run.
 
 Core modules carry top-of-file docblocks explaining the pipeline: `src/tribunal/` (orchestration),
 `src/openrouter/` (chat wrapper, model resolution, retry/backoff, restricted-model handling), and
