@@ -65,7 +65,8 @@ describe('ProtectedRoute / AppRoutes', () => {
           updatedAt: '2026-08-25T10:00:00.000Z',
         }),
       ),
-      http.get(`${API_BASE}/models/free`, () => HttpResponse.json([])),
+      http.get(`${API_BASE}/models`, () => HttpResponse.json([])),
+      http.get(`${API_BASE}/personas`, () => HttpResponse.json([])),
     );
 
     renderWithProviders(

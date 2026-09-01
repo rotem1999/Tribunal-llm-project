@@ -9,7 +9,7 @@ const OPTIONS: { mode: RunMode; label: string; hint: string }[] = [
   {
     mode: RunMode.B_per_persona,
     label: 'Model per persona',
-    hint: 'A distinct free model for each of the 7 personas.',
+    hint: 'Pick a model for each of the 7 personas.',
   },
 ];
 

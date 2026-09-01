@@ -175,7 +175,10 @@ export class TribunalService {
       if (req.mode === RunMode.A_single) {
         modelSingle = await this.models.resolveModeAModel(req.modelSingle);
       } else {
-        assignment = await this.models.assignModeBModels(personaKeys);
+        assignment = await this.models.assignModeBModels(
+          personaKeys,
+          req.modelByPersona,
+        );
       }
       const modelFor = (key: string): string =>
         req.mode === RunMode.A_single ? (modelSingle as string) : assignment[key];

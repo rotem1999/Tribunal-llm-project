@@ -6,6 +6,7 @@ import {
   Side,
   type ChargeSheet,
   type FreeModel,
+  type ModelInfo,
   type RunDetail,
   type PersonaInfo,
   type RunEconomy,
@@ -204,6 +205,33 @@ export function makeFreeModels(): FreeModel[] {
   return [
     { id: 'meta-llama/llama-3-8b:free', contextLength: 8192 },
     { id: 'mistralai/mistral-7b:free', contextLength: 32768 },
+  ];
+}
+
+/** Usable models, free + paid, with pricing (SPEC §5.2/§11 — `GET /models`). */
+export function makeModels(): ModelInfo[] {
+  return [
+    {
+      id: 'meta-llama/llama-3-8b:free',
+      contextLength: 8192,
+      promptUsd: 0,
+      completionUsd: 0,
+      isFree: true,
+    },
+    {
+      id: 'mistralai/mistral-7b:free',
+      contextLength: 32768,
+      promptUsd: 0,
+      completionUsd: 0,
+      isFree: true,
+    },
+    {
+      id: 'anthropic/claude-3-haiku',
+      contextLength: 200000,
+      promptUsd: 0.00000025,
+      completionUsd: 0.00000125,
+      isFree: false,
+    },
   ];
 }
 
