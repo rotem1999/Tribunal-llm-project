@@ -5,7 +5,12 @@ import {
   PrimaryGeneratedColumn,
   ValueTransformer,
 } from 'typeorm';
-import { RunMode, RunStatus, type VerdictTally } from '@tribunal/shared-types';
+import {
+  type ErrorCode,
+  RunMode,
+  RunStatus,
+  type VerdictTally,
+} from '@tribunal/shared-types';
 
 /** Postgres `numeric` <-> JS number (TypeORM returns numerics as strings). */
 export const numericTransformer: ValueTransformer = {
@@ -61,8 +66,13 @@ export class Run {
   @Column({ name: 'speech_order_by_judge', type: 'jsonb', nullable: true })
   speechOrderByJudge!: Record<string, string[]> | null;
 
+  /** User-safe message on failure (SPEC §12.1); the raw cause goes to the §5.7 log only. */
   @Column({ type: 'text', nullable: true })
   error!: string | null;
+
+  /** Stable failure/flag category (SPEC §12.1); e.g. VERDICT_UNREADABLE on a completed run. */
+  @Column({ name: 'error_code', type: 'varchar', nullable: true })
+  errorCode!: ErrorCode | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

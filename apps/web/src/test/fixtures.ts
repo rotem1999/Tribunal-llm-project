@@ -173,6 +173,7 @@ export function makeRunDetail(overrides: Partial<RunDetail> = {}): RunDetail {
     createdAt: '2026-08-28T10:00:00.000Z',
     completedAt: '2026-08-28T10:01:00.000Z',
     error: null,
+    errorCode: null,
     ...overrides,
   };
 }

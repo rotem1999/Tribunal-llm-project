@@ -1,7 +1,7 @@
 /** Run contract (SPEC §4.3–4.5, §10). The output is 3 independent verdicts +
  * economy — never a combined verdict. */
 
-import type { RunMode, RunStatus, Side, Decision } from './enums.js';
+import type { RunMode, RunStatus, Side, Decision, ErrorCode } from './enums.js';
 import type { RunEconomy, VerdictTally } from './economy.js';
 
 /** `POST /runs` body — no charge-sheet text (the server loads it, SPEC §10.1). */
@@ -75,6 +75,8 @@ export interface RunSummary {
   /** Non-binding; null until completed. */
   verdictTally: VerdictTally | null;
   totalCostUsd: number;
+  /** Stable failure/flag category (SPEC §12.1); null when none. */
+  errorCode?: ErrorCode | null;
 }
 
 /**
@@ -105,8 +107,10 @@ export interface RunDetail {
   createdAt: string;
   /** ISO-8601 timestamp; null until finished. */
   completedAt?: string | null;
-  /** Populated on failure / partial runs. */
+  /** User-safe message on failure/partial runs (SPEC §12.1) — never the raw cause. */
   error?: string | null;
+  /** Stable failure/flag category (SPEC §12.1); null when none. */
+  errorCode?: ErrorCode | null;
 }
 
 /** Phase of a running tribunal, for the live animation (SPEC §5.5, §10.1). */
@@ -121,6 +125,8 @@ export interface RunProgress {
   phase: RunPhase;
   /** Persona keys whose speech/verdict has been persisted so far. */
   completedPersonaKeys: string[];
-  /** Populated on a failed/partial run. */
+  /** User-safe message on a failed/partial run (SPEC §12.1) — never the raw cause. */
   error?: string | null;
+  /** Stable failure/flag category (SPEC §12.1); null when none. */
+  errorCode?: ErrorCode | null;
 }

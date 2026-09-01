@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse, delay, type RequestHandler } from 'msw';
 import { describe, expect, it } from 'vitest';
+import { ErrorCode } from '@tribunal/shared-types';
 import { NewRun } from './NewRun';
 import { API_BASE, server } from '../test/server';
 import { makeChargeSheet, makeModels, makePersonas } from '../test/fixtures';
@@ -90,10 +91,17 @@ describe('NewRun', () => {
     });
   });
 
-  it('surfaces an ApiError message when the run fails and re-enables the button', async () => {
+  it('surfaces the friendly ErrorNotice copy when the run fails and re-enables the button', async () => {
     handlers([
       http.post(`${API_BASE}/runs`, () =>
-        HttpResponse.json({ message: 'Over the cost ceiling.' }, { status: 400 }),
+        HttpResponse.json(
+          {
+            statusCode: 400,
+            code: ErrorCode.INVALID_INPUT,
+            message: 'Over the cost ceiling.',
+          },
+          { status: 400 },
+        ),
       ),
     ]);
 
@@ -102,8 +110,9 @@ describe('NewRun', () => {
 
     await user.click(screen.getByRole('button', { name: 'Run tribunal' }));
 
+    // The UI renders the code-keyed friendly copy, never the raw backend message.
     expect(
-      await screen.findByText('Over the cost ceiling.'),
+      await screen.findByText(/weren't entered correctly/i),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Run tribunal' })).toBeEnabled();
   });

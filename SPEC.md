@@ -243,7 +243,8 @@ This is the canonical case extracted from the owner's dossier.
 | totalTokens | integer | |
 | totalCostUsd | numeric(12,6) | Σ of all call costs (0 for free models) |
 | speechOrderByJudge | jsonb | recorded counterbalanced order per judge (audit) |
-| error | text null | populated on failure |
+| error | text null | populated on failure — a **user-safe** message (§12.1), never the raw cause (raw goes only to the §5.7 log) |
+| errorCode | enum(`ErrorCode`) null | stable machine code for the failure/flag (§12.1); e.g. `MODEL_UNAVAILABLE`, or `VERDICT_UNREADABLE` on a completed run that fell back (§5.6) |
 | createdAt / completedAt | timestamptz | |
 
 ### 4.4 `Speech` (one per advocate call)
@@ -660,7 +661,9 @@ All via `@nestjs/config` with schema validation; document in `.env.example`.
 
 ## 10. API contract (backend)
 
-All JSON. All except `/auth/login` require `Authorization: Bearer <jwt>`.
+All JSON. All except `/auth/login` require `Authorization: Bearer <jwt>`. Error responses share one
+shape — `{ statusCode, code, message }` — where `code` is a stable `ErrorCode` and `message` is
+user-safe, never the raw cause (§12.1).
 
 | method | path | body / query | returns |
 |--------|------|--------------|---------|
@@ -744,6 +747,50 @@ verbatim-but-friendly; show partial results if status is `aborted_over_budget`.
 - Verdict parse failure → one re-ask, then conservative fallback + flag (§5.6).
 - Budget exceeded → `aborted_over_budget`, persist partial + economy.
 - All model prompts/responses and model IDs are snapshotted per call for reproducibility/audit.
+
+### 12.1 User-facing error taxonomy (friendly copy, never raw)
+
+**Goal:** the app never shows a user a raw exception string, HTTP status dump, or model/provider
+output. The single seeded user is not a developer; every error reaching the screen is a short, plain
+sentence they can act on. The raw technical detail is not lost — it lives only in the §5.7 diagnostic
+log (and `rawResponse` for verdicts).
+
+**How (owner decision, 2026-09-01): a backend error *code* + frontend *copy*.** The backend
+classifies every failure into one stable, machine-readable `code`; the frontend owns the
+user-facing wording keyed by that code. No string-matching of raw messages in the UI.
+
+**The codes** (`ErrorCode` enum in `@tribunal/shared-types`):
+
+| `code` | raised by | HTTP | plain-language copy (frontend) |
+|--------|-----------|------|--------------------------------|
+| `UNAUTHORIZED` | expired/missing JWT (§7) | 401 | "Your session has ended. Please sign in again." (client also routes to Login) |
+| `INVALID_INPUT` | `ValidationPipe` / bad DTO | 400 | "Some details weren't entered correctly. Please check and try again." |
+| `NO_FREE_MODELS` | `DataPolicyError` (§5.3) | 404 | "No free AI models are available. In your OpenRouter account, turn on the two free-endpoint privacy settings, then try again." (keeps §5.3's actionable intent, in plain words) |
+| `OUT_OF_CREDITS` | `OutOfCreditsError` (§5.4) | 402 | "The AI service is out of credits. Please try again later." |
+| `RATE_LIMITED` | `RateLimitError` (§5.4) | 429 | "The AI service is busy right now. Please wait a moment and try again." |
+| `MODEL_UNAVAILABLE` | `ModelUnavailableError` surfaced after swaps exhausted (§5.2/§5.4) | 422 | "We couldn't reach a working AI model for this run. Please try again." |
+| `PROVIDER_ERROR` | other `OpenRouterError` / bad gateway | 502 | "The AI service had a problem completing this run. Please try again." |
+| `VERDICT_UNREADABLE` | verdict parse fell back (§5.6) — a **completed** run flag, not a failure | — | "One judge's verdict couldn't be read clearly, so a cautious default was used." |
+| `INTERNAL` | anything uncategorized | 500 | "Something went wrong. Please try again." |
+| `NETWORK` | frontend-only: the request never got a response (API unreachable) | — | "Couldn't reach the Tribunal service. Check that it's running and try again." |
+
+**Backend contract:**
+- Error responses become `{ statusCode, code, message }` where `message` is the **user-safe** string
+  (not raw). A single `classifyError(err) → { status, code, message }` helper (in `apps/api/src/common/`)
+  is the one source of truth, used by **both** the `AllExceptionsFilter` (§12) and the run pipeline.
+  The filter logs the raw cause to the §5.7 log, then responds with the safe body.
+- The `Run` gains an **`errorCode`** column (`ErrorCode` enum, nullable; §4.3). On a failed run the
+  pipeline stores `errorCode` + a user-safe `error` message via `classifyError`; the **raw** cause
+  goes only to the §5.7 log (never into `Run.error`). A completed run that fell back on a verdict
+  (§5.6) carries `errorCode = VERDICT_UNREADABLE` (status stays `completed`).
+
+**Frontend contract:**
+- `ApiError` carries `code` (parsed from the body; `NETWORK` when `fetch` rejects with no response).
+- A small presenter maps `code → copy`; components render only that copy, **never** `run.error` or a
+  backend `message` verbatim. Unknown/absent codes fall back to the `INTERNAL` copy.
+- **Fallback reference (owner decision):** for an unexpected/uncategorized failure the friendly line
+  is followed by a small, quotable **reference** — the run id and the `code` — so the user can report
+  it to whoever runs the app without any internals being exposed. The raw cause stays in the §5.7 log.
 
 ---
 

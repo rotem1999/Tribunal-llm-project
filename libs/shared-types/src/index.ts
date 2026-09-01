@@ -3,6 +3,7 @@
  * apps/web (SPEC §3). Enums + request/response interfaces only; no runtime deps.
  */
 export * from './enums.js';
+export * from './error.js';
 export * from './auth.js';
 export * from './models.js';
 export * from './charge-sheet.js';

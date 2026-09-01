@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  ErrorCode,
   RunMode,
   type ChargeSheet,
   type ModelInfo,
@@ -34,7 +35,7 @@ export function NewRun() {
   const [modelSingle, setModelSingle] = useState('');
   const [modelByPersona, setModelByPersona] = useState<Record<string, string>>({});
   const [running, setRunning] = useState(false);
-  const [error, setError] = useState('');
+  const [errorCode, setErrorCode] = useState<ErrorCode | null>(null);
 
   useEffect(() => {
     getActiveChargeSheet().then(setSheet).catch(() => undefined);
@@ -51,7 +52,7 @@ export function NewRun() {
 
   async function run() {
     setRunning(true);
-    setError('');
+    setErrorCode(null);
     try {
       const { runId } = await createRun(
         mode === RunMode.A_single
@@ -60,7 +61,7 @@ export function NewRun() {
       );
       navigate(`/runs/${runId}`);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Run failed.');
+      setErrorCode(codeOf(err));
       setRunning(false);
     }
   }
@@ -149,11 +150,7 @@ export function NewRun() {
         )}
       </section>
 
-      {error && (
-        <p className="text-sm text-not-justified" role="alert">
-          {error}
-        </p>
-      )}
+      {errorCode && <ErrorNotice code={errorCode} />}
 
       <div>
         <Button onClick={run} disabled={!canRun}>
