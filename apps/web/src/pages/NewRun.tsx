@@ -15,7 +15,7 @@ import { createRun } from '../api/runs';
 import { ErrorNotice } from '../components/ErrorNotice';
 import { ModelPicker } from '../components/ModelPicker';
 import { ModeToggle } from '../components/ModeToggle';
-import { Button, Card, Eyebrow } from '../components/ui';
+import { Button, Card, Eyebrow, Switch } from '../components/ui';
 
 /** Human label for a persona row in the Mode B picker list. */
 function personaLabel(p: PersonaInfo): string {
@@ -100,15 +100,11 @@ export function NewRun() {
             Mode
           </h2>
           {hasPaid && (
-            <label className="flex items-center gap-2 text-xs text-neutral-400">
-              <input
-                type="checkbox"
-                checked={showPaid}
-                onChange={(e) => setShowPaid(e.target.checked)}
-                className="accent-accent"
-              />
-              Show paid models
-            </label>
+            <Switch
+              checked={showPaid}
+              onChange={setShowPaid}
+              label="Show paid models"
+            />
           )}
         </div>
         <ModeToggle value={mode} onChange={setMode} />

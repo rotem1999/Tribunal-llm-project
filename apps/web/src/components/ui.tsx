@@ -72,6 +72,43 @@ export function Card({
   );
 }
 
+/**
+ * A sliding toggle switch (Nocturne accent track + thumb). It is a real
+ * `<input type="checkbox">` under the hood — the visual is CSS-only via the
+ * `peer` + `after:` thumb pattern — so it keeps the checkbox role and label
+ * semantics while reading as a switch. Track/thumb slide to the accent on.
+ */
+export function Switch({
+  checked,
+  onChange,
+  label,
+  id,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label: ReactNode;
+  id?: string;
+}) {
+  return (
+    <label
+      htmlFor={id}
+      className="inline-flex cursor-pointer select-none items-center gap-2.5 text-xs text-neutral-400"
+    >
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="peer sr-only"
+      />
+      <span
+        className="relative h-5 w-9 shrink-0 rounded-full border border-neutral-700 bg-neutral-900 transition-colors after:absolute after:left-[3px] after:top-1/2 after:h-3 after:w-3 after:-translate-y-1/2 after:rounded-full after:bg-neutral-500 after:transition-all after:content-[''] peer-checked:border-accent peer-checked:bg-accent/25 peer-checked:after:translate-x-4 peer-checked:after:bg-accent peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent"
+      />
+      {label}
+    </label>
+  );
+}
+
 export function Eyebrow({ children }: { children: ReactNode }) {
   return (
     <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-accent">
