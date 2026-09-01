@@ -97,6 +97,7 @@ describe('validateEnv', () => {
       expect(env.CHARGE_SHEET_SEED_FILE).toBe('charge-sheet.seed.txt');
       expect(env.PORT).toBe(3000);
       expect(env.DISABLE_MODEL_REASONING).toBe(true);
+      expect(env.JUDGE_REASONING_EFFORT).toBe('low');
     });
 
     it('parses DISABLE_MODEL_REASONING="false" as the boolean false (not truthy string)', () => {

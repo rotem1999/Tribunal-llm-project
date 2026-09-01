@@ -61,6 +61,12 @@ export const envSchema = z.object({
   // models otherwise dump their entire chain-of-thought into the response and
   // exhaust MODEL_MAX_TOKENS before emitting the required verdict block (§5.6).
   DISABLE_MODEL_REASONING: booleanFromEnv.default(true),
+  // Reasoning effort requested on JUDGE calls only, so the response returns the
+  // model's thinking for display (`modelReasoning`, §5.4). `none` disables it.
+  // `low` keeps the thinking modest so the verdict block still fits the cap.
+  JUDGE_REASONING_EFFORT: z
+    .enum(['none', 'minimal', 'low', 'medium', 'high'])
+    .default('low'),
 
   // --- Diagnostic logging (SPEC §5.7) — durable forensic file log ---
   // Directory for the daily JSONL log (`app-YYYY-MM-DD.jsonl`), resolved from the

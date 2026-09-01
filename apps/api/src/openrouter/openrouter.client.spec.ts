@@ -191,6 +191,82 @@ describe('OpenRouterClient.callModel — success + usage capture', () => {
     );
     expect(body.reasoning).toBeUndefined();
   });
+
+  it('requests reasoning at the default effort ({effort:"low"}) when captureReasoning is set (§5.4)', async () => {
+    const fetchMock = setFetch(async () =>
+      okResponse({ choices: [{ message: { content: 'x' } }], usage: {} }),
+    );
+    await client.callModel({ ...PARAMS, captureReasoning: true });
+    const body = JSON.parse(
+      (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string,
+    );
+    expect(body.reasoning).toEqual({ effort: 'low' });
+  });
+
+  it('honors JUDGE_REASONING_EFFORT for a captureReasoning call ({effort:"high"})', async () => {
+    const fetchMock = setFetch(async () =>
+      okResponse({ choices: [{ message: { content: 'x' } }], usage: {} }),
+    );
+    const highEffort = new TestClient(
+      makeConfig({ JUDGE_REASONING_EFFORT: 'high' }),
+    );
+    await highEffort.callModel({ ...PARAMS, captureReasoning: true });
+    const body = JSON.parse(
+      (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string,
+    );
+    expect(body.reasoning).toEqual({ effort: 'high' });
+  });
+
+  it('sends {enabled:false} for a captureReasoning call when JUDGE_REASONING_EFFORT="none"', async () => {
+    const fetchMock = setFetch(async () =>
+      okResponse({ choices: [{ message: { content: 'x' } }], usage: {} }),
+    );
+    const noneEffort = new TestClient(
+      makeConfig({ JUDGE_REASONING_EFFORT: 'none' }),
+    );
+    await noneEffort.callModel({ ...PARAMS, captureReasoning: true });
+    const body = JSON.parse(
+      (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string,
+    );
+    expect(body.reasoning).toEqual({ enabled: false });
+  });
+
+  it('captureReasoning wins over DISABLE_MODEL_REASONING=true (still {effort:"low"})', async () => {
+    const fetchMock = setFetch(async () =>
+      okResponse({ choices: [{ message: { content: 'x' } }], usage: {} }),
+    );
+    // Global reasoning-disable is on (the default), but the judge call opts in.
+    const client2 = new TestClient(
+      makeConfig({ DISABLE_MODEL_REASONING: 'true' }),
+    );
+    await client2.callModel({ ...PARAMS, captureReasoning: true });
+    const body = JSON.parse(
+      (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string,
+    );
+    expect(body.reasoning).toEqual({ effort: 'low' });
+  });
+
+  it('normalize: reads choices[0].message.reasoning into result.reasoning', async () => {
+    setFetch(async () =>
+      okResponse({
+        choices: [{ message: { content: 'x', reasoning: 'because ...' } }],
+        usage: { total_tokens: 1 },
+      }),
+    );
+    const result = await client.callModel({ ...PARAMS, captureReasoning: true });
+    expect(result.reasoning).toBe('because ...');
+  });
+
+  it('normalize: reasoning is null when message.reasoning is absent', async () => {
+    setFetch(async () =>
+      okResponse({
+        choices: [{ message: { content: 'x' } }],
+        usage: { total_tokens: 1 },
+      }),
+    );
+    const result = await client.callModel(PARAMS);
+    expect(result.reasoning).toBeNull();
+  });
 });
 
 describe('OpenRouterClient.callModel — retry + error mapping', () => {

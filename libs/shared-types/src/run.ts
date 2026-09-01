@@ -61,6 +61,12 @@ export interface Verdict {
    * stand; the UI shows a "recess" placeholder instead of `reasoning` (§11).
    */
   truncated: boolean;
+  /**
+   * The judge model's own reasoning/thinking (SPEC §5.4), captured for display
+   * when reasoning is enabled on judge calls; null/absent when the model
+   * returned none. The UI shows it as a subsection beneath the opinion (§11).
+   */
+  modelReasoning?: string | null;
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;

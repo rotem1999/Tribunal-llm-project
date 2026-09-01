@@ -86,13 +86,19 @@ export class OpenRouterClient {
       // Ask OpenRouter to include usage accounting (usage.cost) in the response.
       usage: { include: true },
     };
-    // Disable model "reasoning" (default). Several free models otherwise emit
-    // their whole chain-of-thought as the message content and burn the entire
-    // token budget before ever producing the verdict block (§5.6) — turning a
-    // clean 3-line answer into multi-KB of gibberish. Off → a direct answer. A
-    // model that *requires* reasoning rejects this with a 400 and is swapped
-    // (see below). Set DISABLE_MODEL_REASONING=false to opt back in.
-    if (this.reasoningDisabled()) {
+    // Reasoning policy (SPEC §5.4). Judge calls opt in via `captureReasoning` to
+    // request the model's thinking *for display* at a modest effort
+    // (JUDGE_REASONING_EFFORT, default `low`); the response's `message.reasoning`
+    // is then captured. All other calls keep reasoning disabled (default): several
+    // free models otherwise dump their whole chain-of-thought as the message
+    // content and burn the token budget before producing the verdict block (§5.6).
+    // A model that *requires* reasoning rejects `enabled:false` with a 400 and is
+    // swapped (see below). `captureReasoning` wins over DISABLE_MODEL_REASONING.
+    if (params.captureReasoning) {
+      const effort = this.config.get<string>('JUDGE_REASONING_EFFORT', 'low');
+      payload.reasoning =
+        effort === 'none' ? { enabled: false } : { effort };
+    } else if (this.reasoningDisabled()) {
       payload.reasoning = { enabled: false };
     }
     const body = JSON.stringify(payload);
@@ -240,6 +246,7 @@ export class OpenRouterClient {
     const u = json.usage ?? {};
     return {
       content: json.choices?.[0]?.message?.content ?? '',
+      reasoning: json.choices?.[0]?.message?.reasoning ?? null,
       usage: {
         promptTokens: u.prompt_tokens ?? 0,
         completionTokens: u.completion_tokens ?? 0,

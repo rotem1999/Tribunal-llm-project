@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { Decision } from '@tribunal/shared-types';
 import { VerdictCard } from './VerdictCard';
@@ -79,5 +80,32 @@ describe('VerdictCard', () => {
     // Decision badge + confidence still stand.
     expect(screen.getByText('not justified')).toBeInTheDocument();
     expect(screen.getByText('confidence 55')).toBeInTheDocument();
+  });
+
+  it('renders a collapsible "Model\'s reasoning" subsection (hidden until clicked) when modelReasoning is present (§5.4)', async () => {
+    const user = userEvent.setup();
+    const verdict = makeVerdict({
+      modelReasoning: 'The model weighed X against Y.',
+    });
+
+    render(<VerdictCard verdict={verdict} />);
+
+    // The control is present, but the reasoning text starts collapsed.
+    const control = screen.getByText(/model's reasoning/i);
+    expect(control).toBeInTheDocument();
+    expect(
+      screen.queryByText('The model weighed X against Y.'),
+    ).not.toBeInTheDocument();
+
+    // Clicking the control reveals the reasoning text.
+    await user.click(control);
+    expect(
+      screen.getByText('The model weighed X against Y.'),
+    ).toBeInTheDocument();
+  });
+
+  it('renders NO "Model\'s reasoning" control when the verdict has no modelReasoning', () => {
+    render(<VerdictCard verdict={makeVerdict()} />);
+    expect(screen.queryByText(/model's reasoning/i)).not.toBeInTheDocument();
   });
 });

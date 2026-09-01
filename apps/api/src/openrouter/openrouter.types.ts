@@ -14,6 +14,13 @@ export interface CallModelParams {
    */
   runId?: string;
   personaKey?: string;
+  /**
+   * Judge calls set this to request the model's reasoning **for display** (SPEC
+   * §5.4): the call sends `reasoning: { effort: JUDGE_REASONING_EFFORT }` and the
+   * response's `message.reasoning` is captured. Overrides the global
+   * `DISABLE_MODEL_REASONING` for this call. Advocates leave it unset (disabled).
+   */
+  captureReasoning?: boolean;
 }
 
 /** Normalized usage read straight from OpenRouter's `usage` (SPEC §5.4). */
@@ -30,6 +37,12 @@ export interface CallUsage {
 /** Result of one call. */
 export interface CallModelResult {
   content: string;
+  /**
+   * The model's own reasoning/thinking (`choices[0].message.reasoning`, SPEC
+   * §5.4), captured when the call requested it (judge calls). `null` when
+   * reasoning was disabled or the model returned none.
+   */
+  reasoning: string | null;
   usage: CallUsage;
   latencyMs: number;
   /**
@@ -42,7 +55,10 @@ export interface CallModelResult {
 
 /** Minimal shape of OpenRouter's chat-completions response we read. */
 export interface OpenRouterChatResponse {
-  choices?: Array<{ message?: { content?: string }; finish_reason?: string | null }>;
+  choices?: Array<{
+    message?: { content?: string; reasoning?: string | null };
+    finish_reason?: string | null;
+  }>;
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;

@@ -48,6 +48,14 @@ export class Verdict {
   @Column({ type: 'boolean', default: false })
   truncated!: boolean;
 
+  /**
+   * The judge model's own reasoning/thinking (`message.reasoning`, SPEC §5.4),
+   * captured when reasoning is enabled on judge calls; null when the model
+   * returned none. Shown as a subsection beneath the opinion (§11).
+   */
+  @Column({ name: 'model_reasoning', type: 'text', nullable: true })
+  modelReasoning!: string | null;
+
   /** Order of speeches this judge saw (audit). */
   @Column({ name: 'speech_order_shown', type: 'jsonb', nullable: true })
   speechOrderShown!: string[] | null;

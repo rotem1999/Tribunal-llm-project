@@ -276,6 +276,7 @@ This is the canonical case extracted from the owner's dossier.
 | reasoning | text | the judge's **short opinion** (parsed from `OPINION:`, §5.6); full text in `rawResponse` |
 | rawResponse | text | full model text (fallback if parsing partial) |
 | truncated | boolean | default `false`; the judge's opinion could not be read — the model's reply was **cut off** (`finish_reason = length`, common on free models' small token caps), a re-ask still failed (conservative fallback, §5.6), or the parsed opinion was empty. `decision` + `confidence` are still shown; only the **opinion body** is replaced by a friendly "recess" placeholder in the card (§5.6/§11). |
+| modelReasoning | text null | the judge model's own **reasoning/thinking** (`choices[0].message.reasoning`), captured for display when reasoning is enabled on judge calls (§5.4). `null` when the model returned none (unsupported/omitted/truncated). Shown as a collapsible subsection beneath the opinion (§11). |
 | speechOrderShown | jsonb | order of speeches this judge saw (audit) |
 | promptTokens / completionTokens / totalTokens | integer | |
 | reasoningTokens | integer null | |
@@ -369,6 +370,19 @@ callModel({ model, systemPrompt, userPrompt, temperature, maxTokens }) → {
   model went from a 140s truncated think-dump to a 2s clean answer). A model that *requires*
   reasoning returns a 400 ("Reasoning is mandatory … cannot be disabled"); that is mapped to
   `ModelUnavailableError` (swap) like any other unusable model.
+- **Judge reasoning capture (scoped exception; owner decision, 2026-09-01).** The **3 judge calls
+  only** instead *request* the model's reasoning **for display**: send `reasoning: { effort: … }`
+  (`JUDGE_REASONING_EFFORT`, default `low`; **not** `exclude`d) so the response returns
+  `choices[0].message.reasoning` — the model's own thinking about the charge sheet and the speeches it
+  was shown. Advocate calls stay reasoning-**disabled** (above) to keep speeches on-signal. The
+  reasoning string is persisted on the `Verdict` (`modelReasoning`, §4.5) and shown beneath the opinion
+  (§11) **only when present**: free models bill reasoning tokens at `$0` but they still consume
+  `MODEL_MAX_TOKENS`, so enabling this *increases* truncation (the §5.6 recess fallback covers it), and
+  a model that does not support reasoning simply omits the field (no error, no `modelReasoning`). `low`
+  effort keeps the thinking modest so the strict verdict block still fits the output cap. The verdict
+  parser is unaffected — it reads `content`, which stays the clean 3-line block. (The disable path
+  above sends `reasoning:{enabled:false}`, a legacy alias; OpenRouter's currently *documented* disable
+  is `effort:"none"` — a future cleanup, noted, not changed here.)
 - **Retry/backoff:** on HTTP 429 (rate limit) retry with exponential backoff (e.g. 1s, 2s, 4s; max
   4 attempts, jitter). On HTTP 402 (out of credits) abort the whole run with a clear message. On
   the §5.3 404, abort with the actionable message.
@@ -654,7 +668,8 @@ All via `@nestjs/config` with schema validation; document in `.env.example`.
 | `JUDGE_TEMPERATURE` | no | `0.2` | |
 | `MODEL_MAX_TOKENS` | no | `1024` | per call output cap |
 | `CALL_TIMEOUT_MS` | no | `90000` | per-call timeout; covers the response-body read, not just headers (§5.4) |
-| `DISABLE_MODEL_REASONING` | no | `true` | send `reasoning:{enabled:false}` so models return the plain verdict block instead of dumping chain-of-thought (§5.4/§5.6) |
+| `DISABLE_MODEL_REASONING` | no | `true` | send `reasoning:{enabled:false}` so **advocate** models return the plain verdict block instead of dumping chain-of-thought (§5.4/§5.6) |
+| `JUDGE_REASONING_EFFORT` | no | `low` | reasoning effort requested on **judge** calls so the response returns the model's thinking for display (`modelReasoning`, §5.4); `none` disables it. Advocates are unaffected. |
 | `LOG_DIR` | no | `apps/api/data/logs` | directory for the diagnostic JSONL log (§5.7), resolved from the workspace root |
 | `LOG_TO_FILE` | no | `true` | write the diagnostic log to file; `false` = console only (e.g. under test) (§5.7) |
 | `LOG_LEVEL` | no | `info` | minimum level written to the diagnostic log: `info`/`warn`/`error` (§5.7) |
@@ -730,6 +745,9 @@ Pages:
     unreadable), the Reasoning section instead shows a short, friendly **recess placeholder** (e.g.
     "This judge stepped out for a brief recess and didn't file an opinion — their model's reply was cut
     off") rather than raw/garbled text; the decision badge and confidence are still shown unchanged.
+    When the judge model returned its own **reasoning/thinking** (`modelReasoning`, §5.4), a further
+    **"Model's reasoning"** subsection appears beneath the opinion — present **only when** the model
+    emitted it (free models often omit it), so it never renders an empty block.
     Below them, the
     The three judge cards share **one group expand/collapse control** on the Judges section header
     (a rotating caret / "Expand all" affordance), **not** a control on each card: readers either open

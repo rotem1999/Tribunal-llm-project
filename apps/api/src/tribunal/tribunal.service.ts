@@ -265,6 +265,8 @@ export class TribunalService {
               maxTokens,
               runId: run.id,
               personaKey: judge.key,
+              // Capture the judge's reasoning for display (SPEC §5.4).
+              captureReasoning: true,
             },
             modelFor(judge.key),
             usedModels,
@@ -273,6 +275,8 @@ export class TribunalService {
           let usage = res.usage;
           // finish_reason of the answer we ultimately parse (re-ask if any).
           let finishReason = res.finishReason;
+          // The model's own thinking, for display (SPEC §5.4); null when absent.
+          let modelReasoning = res.reasoning;
           let fellBack = false;
           let parsed = parseVerdict(res.content);
 
@@ -286,10 +290,12 @@ export class TribunalService {
               maxTokens,
               runId: run.id,
               personaKey: judge.key,
+              captureReasoning: true,
             });
             raw = `${res.content}\n---REASK---\n${reask.content}`;
             usage = mergeUsage(res.usage, reask.usage);
             finishReason = reask.finishReason;
+            modelReasoning = reask.reasoning ?? modelReasoning;
             const p2 = parseVerdict(reask.content);
             if (isNeedsReask(p2)) {
               parsed = fallbackVerdict(raw);
@@ -318,6 +324,7 @@ export class TribunalService {
               reasoning: parsed.reasoning,
               rawResponse: raw,
               truncated,
+              modelReasoning: modelReasoning?.trim() || null,
               speechOrderShown: shownOrder,
               ...usageColumns({ ...res, usage }),
             }),

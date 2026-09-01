@@ -1,9 +1,37 @@
+import { useState } from 'react';
 import { Decision, type Verdict } from '@tribunal/shared-types';
-import { Card } from './ui';
+import { Card, Caret } from './ui';
 
 /** Friendly stand-in when a judge's opinion was cut off/unreadable (SPEC §5.6/§11). */
 const RECESS_COPY =
   "This judge stepped out for a brief recess and didn't file an opinion — their model's reply was cut off before it finished.";
+
+/**
+ * Collapsible "Model's reasoning" subsection (SPEC §5.4/§11): the judge model's
+ * own thinking about the charge sheet + speeches. Rendered only when the model
+ * actually returned reasoning; starts collapsed so the card stays compact.
+ */
+function ModelReasoning({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-3 border-t border-divider pt-3">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-1.5 text-[11px] uppercase tracking-[0.12em] text-neutral-500 transition-colors hover:text-neutral-300"
+      >
+        <span>Model's reasoning</span>
+        <Caret open={open} />
+      </button>
+      {open && (
+        <p className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-xs leading-relaxed text-neutral-400">
+          {text}
+        </p>
+      )}
+    </div>
+  );
+}
 
 /**
  * One judge verdict (SPEC §11). Reads top-to-bottom as (1) the **verdict** —
@@ -63,6 +91,9 @@ export function VerdictCard({
             <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-neutral-300">
               {verdict.reasoning}
             </p>
+          )}
+          {verdict.modelReasoning && (
+            <ModelReasoning text={verdict.modelReasoning} />
           )}
           <div className="mt-3 font-mono text-[11px] text-neutral-500">
             {verdict.model}
